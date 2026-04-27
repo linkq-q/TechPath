@@ -1,4 +1,4 @@
-# 文件用途：数据库初始化和 CRUD 操作，使用 SQLAlchemy 管理 SQLite
+# 文件用途：数据库初始化和 CRUD 操作，使用 SQLAlchemy 管理 SQLite（Phase 1 + Phase 2）
 
 import json
 from datetime import datetime
@@ -55,6 +55,32 @@ class Conversation(Base):
     content = Column(Text)
     tool_calls_json = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class JdRecord(Base):
+    """岗位 JD 爬取记录"""
+    __tablename__ = "jd_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(Text)           # bosszp / niuke / zhihu
+    company = Column(Text)
+    title = Column(Text)
+    location = Column(Text)
+    requirements_raw = Column(Text)   # 原始 JD 文本
+    skills_extracted = Column(Text)   # JSON 字符串，提取的技能列表
+    crawled_at = Column(DateTime, default=datetime.utcnow)
+
+
+class JdAnalysis(Base):
+    """JD 情报分析结果"""
+    __tablename__ = "jd_analysis"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_date = Column(DateTime, default=datetime.utcnow)
+    top_skills_json = Column(Text)     # JSON: [{"skill": "python", "count": 15}, ...]
+    new_keywords_json = Column(Text)   # JSON: ["新关键词1", ...]
+    trend_changes = Column(Text)       # 文字描述趋势变化
+    sample_count = Column(Integer)
 
 
 def init_db() -> None:
@@ -220,4 +246,100 @@ def get_conversations(session_id: str) -> list[dict]:
                 "created_at": c.created_at.isoformat() if c.created_at else "",
             }
             for c in convs
+        ]
+
+
+# ---------- JdRecord CRUD ----------
+
+def save_jd_record(
+    platform: str,
+    company: str,
+    title: str,
+    location: str,
+    requirements_raw: str,
+    skills_extracted: list = None,
+) -> int:
+    """保存一条 JD 爬取记录，返回新记录的 id"""
+    with _get_session() as session:
+        record = JdRecord(
+            platform=platform,
+            company=company,
+            title=title,
+            location=location,
+            requirements_raw=requirements_raw,
+            skills_extracted=json.dumps(skills_extracted or [], ensure_ascii=False),
+            crawled_at=datetime.utcnow(),
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record.id
+
+
+def get_all_jd_records(limit: int = 200) -> list[dict]:
+    """获取所有 JD 记录，按爬取时间倒序"""
+    with _get_session() as session:
+        records = (
+            session.query(JdRecord)
+            .order_by(JdRecord.crawled_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "platform": r.platform,
+                "company": r.company,
+                "title": r.title,
+                "location": r.location,
+                "requirements_raw": r.requirements_raw,
+                "skills_extracted": json.loads(r.skills_extracted) if r.skills_extracted else [],
+                "crawled_at": r.crawled_at.isoformat() if r.crawled_at else "",
+            }
+            for r in records
+        ]
+
+
+# ---------- JdAnalysis CRUD ----------
+
+def save_jd_analysis(
+    top_skills_json: str,
+    new_keywords_json: str,
+    trend_changes: str,
+    sample_count: int,
+) -> int:
+    """保存一次 JD 分析结果，返回新记录的 id"""
+    with _get_session() as session:
+        analysis = JdAnalysis(
+            analysis_date=datetime.utcnow(),
+            top_skills_json=top_skills_json,
+            new_keywords_json=new_keywords_json,
+            trend_changes=trend_changes,
+            sample_count=sample_count,
+        )
+        session.add(analysis)
+        session.commit()
+        session.refresh(analysis)
+        return analysis.id
+
+
+def get_latest_jd_analysis(n: int = 3) -> list[dict]:
+    """获取最近 n 次 JD 分析结果"""
+    with _get_session() as session:
+        analyses = (
+            session.query(JdAnalysis)
+            .order_by(JdAnalysis.analysis_date.desc())
+            .limit(n)
+            .all()
+        )
+        return [
+            {
+                "id": a.id,
+                "analysis_date": a.analysis_date.isoformat() if a.analysis_date else "",
+                "top_skills": json.loads(a.top_skills_json) if a.top_skills_json else [],
+                "new_keywords": json.loads(a.new_keywords_json) if a.new_keywords_json else [],
+                "trend_changes": a.trend_changes or "",
+                "sample_count": a.sample_count or 0,
+            }
+            for a in analyses
         ]
