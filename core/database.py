@@ -1,4 +1,4 @@
-# 文件用途：数据库初始化和 CRUD 操作，使用 SQLAlchemy 管理 SQLite（Phase 1 + Phase 2）
+# 文件用途：数据库初始化和 CRUD 操作，使用 SQLAlchemy 管理 SQLite（Phase 1 + Phase 2 + Phase 3）
 
 import json
 from datetime import datetime
@@ -81,6 +81,34 @@ class JdAnalysis(Base):
     new_keywords_json = Column(Text)   # JSON: ["新关键词1", ...]
     trend_changes = Column(Text)       # 文字描述趋势变化
     sample_count = Column(Integer)
+
+
+class StudySession(Base):
+    """带学会话记录（Phase 3）"""
+    __tablename__ = "study_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    mode = Column(Text)          # repo_analysis / topic_explain / learning_path
+    input_content = Column(Text) # 用户输入的内容（URL/话题/目标岗位）
+    report_json = Column(Text)   # 生成报告的 JSON 字符串
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BilibiliPortfolio(Base):
+    """B站竞品作品集记录（Phase 3）"""
+    __tablename__ = "bilibili_portfolios"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    video_url = Column(Text)
+    uploader = Column(Text)
+    title = Column(Text)
+    publish_date = Column(Text)
+    cohort = Column(Text)        # 届别，如 2026届
+    stage = Column(Text)         # 求职阶段：实习 / 秋招
+    tech_tags = Column(Text)     # JSON 字符串，技术标签列表
+    grade = Column(Text)         # S / A / B / C
+    score = Column(Text)         # 综合评分（数字字符串）
+    analyzed_at = Column(DateTime, default=datetime.utcnow)
 
 
 def init_db() -> None:
@@ -343,3 +371,151 @@ def get_latest_jd_analysis(n: int = 3) -> list[dict]:
             }
             for a in analyses
         ]
+
+
+# ---------- StudySession CRUD ----------
+
+def save_study_session(
+    mode: str,
+    input_content: str,
+    report_json: str,
+) -> int:
+    """保存一条带学会话记录，返回新记录的 id"""
+    with _get_session() as session:
+        record = StudySession(
+            mode=mode,
+            input_content=input_content,
+            report_json=report_json,
+            created_at=datetime.utcnow(),
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record.id
+
+
+def get_study_sessions(mode: str = "", limit: int = 20) -> list[dict]:
+    """获取带学会话记录，可按 mode 过滤"""
+    with _get_session() as session:
+        q = session.query(StudySession).order_by(StudySession.created_at.desc())
+        if mode:
+            q = q.filter(StudySession.mode == mode)
+        records = q.limit(limit).all()
+        return [
+            {
+                "id": r.id,
+                "mode": r.mode,
+                "input_content": r.input_content,
+                "report_json": r.report_json,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in records
+        ]
+
+
+# ---------- BilibiliPortfolio CRUD ----------
+
+def save_bilibili_portfolio(
+    video_url: str,
+    uploader: str,
+    title: str,
+    publish_date: str,
+    cohort: str,
+    stage: str,
+    tech_tags: list,
+    grade: str = "",
+    score: str = "",
+) -> int:
+    """保存一条 B站作品集记录，返回新记录的 id"""
+    with _get_session() as session:
+        record = BilibiliPortfolio(
+            video_url=video_url,
+            uploader=uploader,
+            title=title,
+            publish_date=publish_date,
+            cohort=cohort,
+            stage=stage,
+            tech_tags=json.dumps(tech_tags or [], ensure_ascii=False),
+            grade=grade,
+            score=score,
+            analyzed_at=datetime.utcnow(),
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record.id
+
+
+def get_bilibili_portfolios(
+    cohort: str = "",
+    stage: str = "",
+    grade: str = "",
+    limit: int = 200,
+) -> list[dict]:
+    """获取 B站作品集记录，支持按届别/阶段/评级过滤"""
+    with _get_session() as session:
+        q = session.query(BilibiliPortfolio).order_by(BilibiliPortfolio.analyzed_at.desc())
+        if cohort:
+            q = q.filter(BilibiliPortfolio.cohort == cohort)
+        if stage:
+            q = q.filter(BilibiliPortfolio.stage == stage)
+        if grade:
+            q = q.filter(BilibiliPortfolio.grade == grade)
+        records = q.limit(limit).all()
+        return [_portfolio_to_dict(r) for r in records]
+
+
+def get_portfolio_stats() -> dict:
+    """获取作品集统计数据：总数、各评级数量、最近分析时间"""
+    with _get_session() as session:
+        total = session.query(BilibiliPortfolio).count()
+        grade_counts = {}
+        for g in ["S", "A", "B", "C"]:
+            grade_counts[g] = (
+                session.query(BilibiliPortfolio)
+                .filter(BilibiliPortfolio.grade == g)
+                .count()
+            )
+        latest = (
+            session.query(BilibiliPortfolio)
+            .order_by(BilibiliPortfolio.analyzed_at.desc())
+            .first()
+        )
+        return {
+            "total": total,
+            "grade_counts": grade_counts,
+            "last_analyzed": latest.analyzed_at.isoformat() if latest and latest.analyzed_at else "",
+        }
+
+
+def update_portfolio_grade(video_url: str, grade: str, score: str) -> bool:
+    """更新指定视频的评级结果"""
+    with _get_session() as session:
+        record = (
+            session.query(BilibiliPortfolio)
+            .filter(BilibiliPortfolio.video_url == video_url)
+            .first()
+        )
+        if record is None:
+            return False
+        record.grade = grade
+        record.score = score
+        session.commit()
+        return True
+
+
+def _portfolio_to_dict(record: BilibiliPortfolio) -> dict:
+    """将 ORM 对象转换为字典"""
+    return {
+        "id": record.id,
+        "video_url": record.video_url,
+        "uploader": record.uploader,
+        "title": record.title,
+        "publish_date": record.publish_date,
+        "cohort": record.cohort,
+        "stage": record.stage,
+        "tech_tags": json.loads(record.tech_tags) if record.tech_tags else [],
+        "grade": record.grade,
+        "score": record.score,
+        "analyzed_at": record.analyzed_at.isoformat() if record.analyzed_at else "",
+    }

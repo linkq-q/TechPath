@@ -1,4 +1,4 @@
-# 文件用途：岗位情报分析模块，整合 JD 爬取结果，用 DeepSeek 分析技能趋势和 Gap
+# 文件用途：岗位情报分析模块（Phase 2 + Phase 3），整合 JD 爬取和 B站竞品监测
 
 import json
 import os
@@ -10,8 +10,11 @@ from openai import OpenAI
 from core.database import (
     get_all_jd_records,
     get_all_knowledge_items,
+    get_bilibili_portfolios,
     get_latest_jd_analysis,
+    save_bilibili_portfolio,
     save_jd_analysis,
+    update_portfolio_grade,
 )
 from core.tools import search_knowledge_base
 
@@ -229,3 +232,116 @@ def refresh_intel(keyword: str = "AI TA") -> dict:
     result["crawl_errors"] = crawl_errors
 
     return result
+
+
+# ============================================================
+# T09：B站竞品监测完整流程
+# ============================================================
+
+def refresh_bilibili_portfolios(force_reanalyze: bool = False) -> dict:
+    """
+    串联采集、分析、评级的完整竞品监测流程。
+
+    Args:
+        force_reanalyze: 是否强制重新分析（忽略已有数据）
+
+    Returns:
+        {total_count, grade_distribution, s_grade_tags, analyzed_at}
+    """
+    from core.crawlers.bilibili import (
+        analyze_portfolio_video,
+        crawl_bilibili_portfolios,
+        grade_portfolios,
+    )
+    from datetime import datetime
+    from collections import Counter
+
+    print("[intel] 开始 B站竞品监测流程...")
+
+    # Step 1: 采集视频列表
+    print("[intel] Step 1: 采集视频列表...")
+    try:
+        raw_videos = crawl_bilibili_portfolios(max_count=30)
+    except Exception as e:
+        print(f"[intel] 采集失败：{e}")
+        raw_videos = []
+
+    if not raw_videos:
+        return {
+            "total_count": 0,
+            "grade_distribution": {"S": 0, "A": 0, "B": 0, "C": 0},
+            "s_grade_tags": [],
+            "analyzed_at": datetime.utcnow().isoformat(),
+            "error": "采集到 0 条视频，请检查网络连接",
+        }
+
+    # Step 2: 逐条分析打标并存库
+    print(f"[intel] Step 2: 分析 {len(raw_videos)} 条视频...")
+    analyzed_videos = []
+    for i, video in enumerate(raw_videos):
+        try:
+            analysis = analyze_portfolio_video(video)
+            merged = {**video, **analysis}
+            analyzed_videos.append(merged)
+
+            # 存入数据库
+            save_bilibili_portfolio(
+                video_url=video.get("video_url", ""),
+                uploader=video.get("uploader", ""),
+                title=video.get("title", ""),
+                publish_date=video.get("publish_date", ""),
+                cohort=video.get("cohort", "未知届别"),
+                stage=video.get("stage", "未知阶段"),
+                tech_tags=analysis.get("tech_tags", []),
+            )
+            print(f"[intel]   已分析 {i + 1}/{len(raw_videos)}: {video.get('title', '')[:30]}")
+        except Exception as e:
+            print(f"[intel]   分析失败（{video.get('title', '')}）：{e}")
+            analyzed_videos.append(video)
+
+    # Step 3: 评级
+    print("[intel] Step 3: 计算评级...")
+    try:
+        graded_videos = grade_portfolios(analyzed_videos)
+    except Exception as e:
+        print(f"[intel] 评级失败：{e}")
+        graded_videos = analyzed_videos
+
+    # Step 4: 更新数据库评级
+    for v in graded_videos:
+        url = v.get("video_url", "")
+        grade = v.get("grade", "")
+        score = v.get("score", "")
+        if url and grade:
+            try:
+                update_portfolio_grade(url, grade, score)
+            except Exception as e:
+                print(f"[intel]   更新评级失败（{url}）：{e}")
+
+    # Step 5: 汇总统计
+    grade_dist = {"S": 0, "A": 0, "B": 0, "C": 0}
+    s_tags_counter = Counter()
+
+    for v in graded_videos:
+        grade = v.get("grade", "").rstrip("*")  # 去掉样本不足标注
+        if grade in grade_dist:
+            grade_dist[grade] += 1
+        if grade == "S":
+            for tag in v.get("tech_tags", []):
+                s_tags_counter[tag] += 1
+
+    s_grade_tags = [tag for tag, _ in s_tags_counter.most_common(10)]
+    analyzed_at = datetime.utcnow().isoformat()
+
+    print(f"[intel] 竞品监测完成：{len(graded_videos)} 条，分布 {grade_dist}")
+
+    return {
+        "total_count": len(graded_videos),
+        "grade_distribution": grade_dist,
+        "s_grade_tags": s_grade_tags,
+        "analyzed_at": analyzed_at,
+        "portfolios": graded_videos,
+    }
+
+
+print("✅ T09 完成")
