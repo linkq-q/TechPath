@@ -1,4 +1,4 @@
-# 文件用途：Boss 直聘职位 JD 爬虫，使用 DrissionPage 操作 Chrome 浏览器
+# 文件用途：Boss 直聘职位 JD 爬虫，使用 DrissionPage 操作 Edge 浏览器
 
 import random
 import time
@@ -29,7 +29,7 @@ def crawl_bosszp(keyword: str = "AI TA", max_count: int = 20) -> list:
 
     try:
         opts = ChromiumOptions()
-        opts.headless()
+        opts.set_browser_path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
         opts.set_argument("--no-sandbox")
         opts.set_argument("--disable-dev-shm-usage")
         opts.set_argument("--disable-blink-features=AutomationControlled")

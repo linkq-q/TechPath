@@ -124,11 +124,16 @@ def _build_tools() -> list:
 def _build_agent(memory_context: str = ""):
     """构建 Agent 实例"""
     llm = ChatOpenAI(
-        model=DEEPSEEK_MODEL,
-        api_key=DEEPSEEK_API_KEY,
-        base_url="https://api.deepseek.com",
-        temperature=0.7,
-    )
+    model=DEEPSEEK_MODEL,
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com",
+    temperature=0.7,
+    model_kwargs={
+        "extra_body": {
+            "thinking": {"type": "disabled"}
+        }
+    }
+)
 
     system_content = SYSTEM_PROMPT
     if memory_context:
