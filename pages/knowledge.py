@@ -1,6 +1,6 @@
-# 文件用途：知识库管理页，支持 GitHub 仓库、URL/文章、纯文本三种导入方式
+# 文件用途：知识库管理页（Phase 1 + Phase 2），支持 GitHub / URL / 文本 / 视频四种导入方式
 
-import json
+import os
 
 import streamlit as st
 
@@ -9,15 +9,69 @@ from core.database import (
     get_all_knowledge_items,
     save_knowledge_item,
 )
-from core.tools import import_text_content, read_github_repo
+from core.tools import import_text_content, import_video, read_github_repo
+
+# 检测 QWEN_API_KEY 是否配置
+_HAS_QWEN = bool(os.getenv("QWEN_API_KEY", ""))
 
 
 def render() -> None:
     """渲染知识库管理页面"""
     st.title("知识库")
-    st.markdown("管理你的学习材料，支持 GitHub 仓库、文章 URL、纯文本三种导入方式。")
+    st.markdown("管理你的学习材料，支持 GitHub 仓库、文章 URL、纯文本、B 站视频四种导入方式。")
 
-    tab_github, tab_url, tab_text = st.tabs(["GitHub 仓库", "文章 / URL", "直接输入"])
+    tab_github, tab_url, tab_text, tab_video = st.tabs(["GitHub 仓库", "文章 / URL", "直接输入", "视频导入"])
+
+    # ---- Tab 4: 视频导入 ----
+    with tab_video:
+        st.markdown("#### 导入 B 站视频")
+
+        if not _HAS_QWEN:
+            st.warning("未配置 QWEN_API_KEY，将跳过画面分析，仅进行音频转录。")
+
+        video_url = st.text_input(
+            "B 站视频 URL",
+            placeholder="https://www.bilibili.com/video/BVxxxxxxxxx",
+            key="video_url_input",
+        )
+        video_title = st.text_input(
+            "自定义标题（可选）",
+            placeholder="留空则自动从视频信息获取",
+            key="video_title_input",
+        )
+
+        if st.button("导入视频", key="btn_video"):
+            if not video_url.strip():
+                st.error("请输入 B 站视频 URL")
+            else:
+                with st.status("正在导入视频...", expanded=True) as status:
+                    st.write("步骤 1/2：转录音频中（可能需要数分钟）...")
+
+                    # import_video 内部会先转录再分析
+                    result = import_video(
+                        url=video_url.strip(),
+                        title=video_title.strip(),
+                    )
+
+                    if "error" in result:
+                        status.update(label="导入失败", state="error", expanded=True)
+                        st.error(f"导入失败：{result['error']}")
+                    else:
+                        has_visual = result.get("has_visual", False)
+                        if _HAS_QWEN:
+                            st.write("步骤 2/2：画面分析完成" if has_visual else "步骤 2/2：画面分析跳过（分析失败）")
+                        else:
+                            st.write("步骤 2/2：已跳过画面分析（未配置 QWEN_API_KEY）")
+
+                        status.update(label="视频导入完成", state="complete", expanded=False)
+
+                        st.success(f"视频导入成功！（ID: {result['id']}）")
+                        st.info(f"**摘要：** {result['summary']}")
+                        if result.get("tags"):
+                            st.markdown(
+                                "**识别到的技术标签：** " + " ".join(f"`{t}`" for t in result["tags"])
+                            )
+                        st.rerun()
 
     # ---- Tab 1: GitHub 仓库 ----
     with tab_github:

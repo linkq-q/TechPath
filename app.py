@@ -68,6 +68,9 @@ with st.sidebar:
     if st.button("🎯 开始检验", use_container_width=True):
         st.session_state.current_page = "exam"
 
+    if st.button("🔍 岗位情报", use_container_width=True):
+        st.session_state.current_page = "intel"
+
     st.markdown("---")
     st.markdown(
         "<small style='color:#8b949e'>基于 DeepSeek + LangChain<br>数据本地存储</small>",
@@ -78,6 +81,9 @@ with st.sidebar:
 if st.session_state.current_page == "knowledge":
     from pages.knowledge import render
     render()
-else:
+elif st.session_state.current_page == "exam":
     from pages.exam import render
+    render()
+else:
+    from pages.intel import render
     render()
