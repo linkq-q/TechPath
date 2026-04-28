@@ -71,6 +71,12 @@ with st.sidebar:
     if st.button("🔍 岗位情报", use_container_width=True):
         st.session_state.current_page = "intel"
 
+    if st.button("📖 学习中心", use_container_width=True):
+        st.session_state.current_page = "study"
+
+    if st.button("🏆 竞品监测", use_container_width=True):
+        st.session_state.current_page = "portfolio"
+
     st.markdown("---")
     st.markdown(
         "<small style='color:#8b949e'>基于 DeepSeek + LangChain<br>数据本地存储</small>",
@@ -84,6 +90,15 @@ if st.session_state.current_page == "knowledge":
 elif st.session_state.current_page == "exam":
     from pages.exam import render
     render()
-else:
+elif st.session_state.current_page == "intel":
     from pages.intel import render
+    render()
+elif st.session_state.current_page == "study":
+    from pages.study import render
+    render()
+elif st.session_state.current_page == "portfolio":
+    from pages.portfolio import render
+    render()
+else:
+    from pages.knowledge import render
     render()
