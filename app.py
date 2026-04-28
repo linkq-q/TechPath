@@ -78,6 +78,17 @@ with st.sidebar:
         st.session_state.current_page = "portfolio"
 
     st.markdown("---")
+
+    if st.button("📚 学习历史", use_container_width=True):
+        st.session_state.current_page = "history"
+
+    if st.button("🕸️ 知识网络", use_container_width=True):
+        st.session_state.current_page = "knowledge_network"
+
+    if st.button("⚡ 技能包", use_container_width=True):
+        st.session_state.current_page = "skills"
+
+    st.markdown("---")
     st.markdown(
         "<small style='color:#8b949e'>基于 DeepSeek + LangChain<br>数据本地存储</small>",
         unsafe_allow_html=True,
@@ -98,6 +109,15 @@ elif st.session_state.current_page == "study":
     render()
 elif st.session_state.current_page == "portfolio":
     from pages.portfolio import render
+    render()
+elif st.session_state.current_page == "history":
+    from pages.history import render
+    render()
+elif st.session_state.current_page == "knowledge_network":
+    from pages.knowledge_network import render
+    render()
+elif st.session_state.current_page == "skills":
+    from pages.skills import render
     render()
 else:
     from pages.knowledge import render

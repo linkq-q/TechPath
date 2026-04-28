@@ -8,6 +8,11 @@ def render():
     st.title("📖 学习中心")
     st.markdown("三种带学模式，学完直接进入检验，快速巩固 AI TA 技能。")
 
+    # 处理来自知识网络页面的跳转预填充
+    prefill_topic = st.session_state.pop("prefill_topic", None)
+    if prefill_topic:
+        st.session_state["study_topic"] = prefill_topic
+
     tab1, tab2, tab3 = st.tabs(["🔍 项目解读", "💡 知识点讲解", "🗺️ 学习路径"])
 
     # ============================================================

@@ -1,4 +1,4 @@
-# 文件用途：数据库初始化和 CRUD 操作，使用 SQLAlchemy 管理 SQLite（Phase 1 + Phase 2 + Phase 3）
+# 文件用途：数据库初始化和 CRUD 操作，使用 SQLAlchemy 管理 SQLite（Phase 1 + Phase 2 + Phase 3 + Phase 4）
 
 import json
 from datetime import datetime
@@ -109,6 +109,53 @@ class BilibiliPortfolio(Base):
     grade = Column(Text)         # S / A / B / C
     score = Column(Text)         # 综合评分（数字字符串）
     analyzed_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============================================================
+# Phase 4 新增表：学习历史 / 知识节点 / 技能注册表
+# ============================================================
+
+class LearningHistory(Base):
+    """完整学习历史记录（Phase 4）"""
+    __tablename__ = "learning_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_type = Column(Text)       # repo_analysis / topic_explain / learning_path / exam
+    title = Column(Text)
+    input_content = Column(Text)
+    full_report = Column(Text)        # 完整报告 Markdown
+    qa_history = Column(Text)         # JSON 字符串，问答记录列表
+    knowledge_tags = Column(Text)     # JSON 字符串，相关知识点标签
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class KnowledgeNode(Base):
+    """知识网络节点（Phase 4）"""
+    __tablename__ = "knowledge_nodes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(Text, nullable=False)         # 知识点名称
+    category = Column(Text)                     # 分类：渲染/AIGC/工具/编程
+    description = Column(Text)                  # 一句话描述
+    related_nodes = Column(Text)                # JSON：相关知识点名称列表
+    source_history_ids = Column(Text)           # JSON：来源学习历史 id 列表
+    mastery_level = Column(Integer, default=0)  # 0-100 掌握度
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SkillsRegistry(Base):
+    """Agent Skill 注册表（Phase 4）"""
+    __tablename__ = "skills_registry"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text)
+    trigger_keywords = Column(Text)   # JSON 字符串
+    content_path = Column(Text)       # .skill.md 文件路径
+    metadata_json = Column(Text)      # 完整 YAML frontmatter
+    is_active = Column(Integer, default=1)  # 0=禁用 1=启用
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 def init_db() -> None:
@@ -519,3 +566,237 @@ def _portfolio_to_dict(record: BilibiliPortfolio) -> dict:
         "score": record.score,
         "analyzed_at": record.analyzed_at.isoformat() if record.analyzed_at else "",
     }
+
+
+# ---------- LearningHistory CRUD ----------
+
+def save_learning_history(
+    session_type: str,
+    title: str,
+    input_content: str,
+    full_report: str,
+    qa_history: list = None,
+    knowledge_tags: list = None,
+) -> int:
+    """保存完整学习历史记录，返回新记录的 id"""
+    with _get_session() as session:
+        record = LearningHistory(
+            session_type=session_type,
+            title=title,
+            input_content=input_content,
+            full_report=full_report,
+            qa_history=json.dumps(qa_history or [], ensure_ascii=False),
+            knowledge_tags=json.dumps(knowledge_tags or [], ensure_ascii=False),
+            created_at=datetime.utcnow(),
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record.id
+
+
+def get_learning_histories(session_type: str = None, limit: int = 50) -> list[dict]:
+    """获取学习历史列表（不含 full_report），支持按类型过滤"""
+    with _get_session() as session:
+        q = session.query(LearningHistory).order_by(LearningHistory.created_at.desc())
+        if session_type:
+            q = q.filter(LearningHistory.session_type == session_type)
+        records = q.limit(limit).all()
+        return [
+            {
+                "id": r.id,
+                "session_type": r.session_type,
+                "title": r.title,
+                "input_content": r.input_content,
+                "knowledge_tags": json.loads(r.knowledge_tags) if r.knowledge_tags else [],
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in records
+        ]
+
+
+def get_learning_history_by_id(history_id: int) -> dict | None:
+    """获取单条完整学习历史记录"""
+    with _get_session() as session:
+        r = session.query(LearningHistory).filter(LearningHistory.id == history_id).first()
+        if r is None:
+            return None
+        return {
+            "id": r.id,
+            "session_type": r.session_type,
+            "title": r.title,
+            "input_content": r.input_content,
+            "full_report": r.full_report,
+            "qa_history": json.loads(r.qa_history) if r.qa_history else [],
+            "knowledge_tags": json.loads(r.knowledge_tags) if r.knowledge_tags else [],
+            "created_at": r.created_at.isoformat() if r.created_at else "",
+        }
+
+
+# ---------- KnowledgeNode CRUD ----------
+
+def save_knowledge_node(
+    name: str,
+    category: str = "",
+    description: str = "",
+    related_nodes: list = None,
+    source_history_ids: list = None,
+    mastery_level: int = 0,
+) -> int:
+    """新增知识节点，返回新记录的 id"""
+    with _get_session() as session:
+        node = KnowledgeNode(
+            name=name,
+            category=category,
+            description=description,
+            related_nodes=json.dumps(related_nodes or [], ensure_ascii=False),
+            source_history_ids=json.dumps(source_history_ids or [], ensure_ascii=False),
+            mastery_level=mastery_level,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(node)
+        session.commit()
+        session.refresh(node)
+        return node.id
+
+
+def get_all_knowledge_nodes() -> list[dict]:
+    """获取所有知识节点"""
+    with _get_session() as session:
+        nodes = session.query(KnowledgeNode).order_by(KnowledgeNode.name).all()
+        return [_node_to_dict(n) for n in nodes]
+
+
+def get_knowledge_node_by_name(name: str) -> dict | None:
+    """按名称查找知识节点"""
+    with _get_session() as session:
+        node = session.query(KnowledgeNode).filter(KnowledgeNode.name == name).first()
+        return _node_to_dict(node) if node else None
+
+
+def update_knowledge_node(
+    name: str,
+    category: str = None,
+    description: str = None,
+    related_nodes: list = None,
+    source_history_ids: list = None,
+    mastery_level: int = None,
+) -> bool:
+    """更新指定名称的知识节点，返回是否成功"""
+    with _get_session() as session:
+        node = session.query(KnowledgeNode).filter(KnowledgeNode.name == name).first()
+        if node is None:
+            return False
+        if category is not None:
+            node.category = category
+        if description is not None:
+            node.description = description
+        if related_nodes is not None:
+            node.related_nodes = json.dumps(related_nodes, ensure_ascii=False)
+        if source_history_ids is not None:
+            # 合并已有 id 列表
+            existing = json.loads(node.source_history_ids) if node.source_history_ids else []
+            merged = list(dict.fromkeys(existing + source_history_ids))
+            node.source_history_ids = json.dumps(merged, ensure_ascii=False)
+        if mastery_level is not None:
+            node.mastery_level = max(0, min(100, mastery_level))
+        node.updated_at = datetime.utcnow()
+        session.commit()
+        return True
+
+
+def _node_to_dict(node: KnowledgeNode) -> dict:
+    return {
+        "id": node.id,
+        "name": node.name,
+        "category": node.category or "",
+        "description": node.description or "",
+        "related_nodes": json.loads(node.related_nodes) if node.related_nodes else [],
+        "source_history_ids": json.loads(node.source_history_ids) if node.source_history_ids else [],
+        "mastery_level": node.mastery_level or 0,
+        "created_at": node.created_at.isoformat() if node.created_at else "",
+        "updated_at": node.updated_at.isoformat() if node.updated_at else "",
+    }
+
+
+# ---------- SkillsRegistry CRUD ----------
+
+def save_skill(
+    name: str,
+    description: str,
+    trigger_keywords: list,
+    content_path: str,
+    metadata_json: str = "",
+    is_active: int = 1,
+) -> int:
+    """注册一个 Skill，返回新记录的 id"""
+    with _get_session() as session:
+        # 如果已存在同名则更新
+        existing = session.query(SkillsRegistry).filter(SkillsRegistry.name == name).first()
+        if existing:
+            existing.description = description
+            existing.trigger_keywords = json.dumps(trigger_keywords, ensure_ascii=False)
+            existing.content_path = content_path
+            existing.metadata_json = metadata_json
+            existing.is_active = is_active
+            session.commit()
+            return existing.id
+        skill = SkillsRegistry(
+            name=name,
+            description=description,
+            trigger_keywords=json.dumps(trigger_keywords, ensure_ascii=False),
+            content_path=content_path,
+            metadata_json=metadata_json,
+            is_active=is_active,
+            created_at=datetime.utcnow(),
+        )
+        session.add(skill)
+        session.commit()
+        session.refresh(skill)
+        return skill.id
+
+
+def get_all_skills() -> list[dict]:
+    """获取所有已注册 Skill"""
+    with _get_session() as session:
+        skills = session.query(SkillsRegistry).order_by(SkillsRegistry.name).all()
+        return [_skill_to_dict(s) for s in skills]
+
+
+def toggle_skill(name: str, is_active: bool) -> bool:
+    """启用或禁用指定 Skill"""
+    with _get_session() as session:
+        skill = session.query(SkillsRegistry).filter(SkillsRegistry.name == name).first()
+        if skill is None:
+            return False
+        skill.is_active = 1 if is_active else 0
+        session.commit()
+        return True
+
+
+def delete_skill(name: str) -> bool:
+    """删除指定 Skill 注册记录"""
+    with _get_session() as session:
+        skill = session.query(SkillsRegistry).filter(SkillsRegistry.name == name).first()
+        if skill is None:
+            return False
+        session.delete(skill)
+        session.commit()
+        return True
+
+
+def _skill_to_dict(skill: SkillsRegistry) -> dict:
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "description": skill.description or "",
+        "trigger_keywords": json.loads(skill.trigger_keywords) if skill.trigger_keywords else [],
+        "content_path": skill.content_path or "",
+        "metadata_json": skill.metadata_json or "",
+        "is_active": bool(skill.is_active),
+        "created_at": skill.created_at.isoformat() if skill.created_at else "",
+    }
+
+
+print("✅ T01 完成")

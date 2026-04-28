@@ -1,4 +1,5 @@
-# 文件用途：带学功能核心模块（Phase 3），包含仓库解读、知识点讲解、学习路径规划三大功能
+# 文件用途：带学功能核心模块（Phase 3 + Phase 4），包含仓库解读、知识点讲解、学习路径规划三大功能
+# Phase 4 新增：完成后自动保存学习历史并更新知识网络
 
 import json
 import os
@@ -174,6 +175,20 @@ REPORT_META_JSON::{{"key_concepts": ["概念1", "概念2", "概念3"], "suggeste
     except Exception as e:
         print(f"[study] 存入 study_sessions 失败：{e}")
 
+    # Step 5 (Phase 4): 保存学习历史并更新知识网络
+    try:
+        from core.history import extract_and_update_knowledge_nodes, save_study_record
+        history_id = save_study_record(
+            session_type="repo_analysis",
+            title=f"仓库解读：{repo_name}",
+            input_content=url,
+            full_report=report_markdown,
+            knowledge_tags=key_concepts[:10],
+        )
+        extract_and_update_knowledge_nodes(history_id)
+    except Exception as e:
+        print(f"[study] Phase4 保存历史失败：{e}")
+
     return {
         "repo_name": repo_name,
         "report_markdown": report_markdown,
@@ -279,6 +294,21 @@ EXPLAIN_META_JSON::{{"quiz_questions": ["检验题1?", "检验题2?", "检验题
         )
     except Exception as e:
         print(f"[study] 存入 study_sessions 失败：{e}")
+
+    # Phase 4: 保存学习历史并更新知识网络
+    try:
+        from core.history import extract_and_update_knowledge_nodes, save_study_record
+        tags = [topic] + related_topics[:5]
+        history_id = save_study_record(
+            session_type="topic_explain",
+            title=f"知识点讲解：{topic}",
+            input_content=topic,
+            full_report=explanation_markdown,
+            knowledge_tags=tags,
+        )
+        extract_and_update_knowledge_nodes(history_id)
+    except Exception as e:
+        print(f"[study] Phase4 保存历史失败：{e}")
 
     return {
         "topic": topic,
@@ -411,6 +441,19 @@ PATH_META_JSON::{{"current_gaps": ["差距1", "差距2", "差距3"], "weekly_pla
     except Exception as e:
         print(f"[study] 存入 study_sessions 失败：{e}")
 
+    # Phase 4: 保存学习历史
+    try:
+        from core.history import save_study_record
+        save_study_record(
+            session_type="learning_path",
+            title=f"学习路径：{target_role} / {timeframe_weeks}周",
+            input_content=f"{target_role}/{timeframe_weeks}周",
+            full_report=path_markdown,
+            knowledge_tags=current_gaps[:8],
+        )
+    except Exception as e:
+        print(f"[study] Phase4 保存历史失败：{e}")
+
     return {
         "target_role": target_role,
         "timeframe_weeks": timeframe_weeks,
@@ -422,4 +465,4 @@ PATH_META_JSON::{{"current_gaps": ["差距1", "差距2", "差距3"], "weekly_pla
     }
 
 
-print("✅ T02/T03/T04 完成")
+print("✅ T02/T03/T04 完成（Phase 3 + Phase 4 历史记录集成）")
