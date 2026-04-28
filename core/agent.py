@@ -1,4 +1,5 @@
-# 文件用途：Agent Loop 核心逻辑（Phase 1 + Phase 2 + Phase 3），使用 LangChain 1.2+ create_agent + DeepSeek
+# 文件用途：Agent Loop 核心逻辑（Phase 1 + Phase 2 + Phase 3 + Phase 4），使用 LangChain 1.2+ create_agent + DeepSeek
+# Phase 4 新增：Skills 系统集成（自动加载激活技能元数据 + 按消息匹配技能）
 
 import json
 import os
@@ -21,6 +22,12 @@ from core.tools import (
     search_knowledge_base,
 )
 from core.study import analyze_repo_for_learning, explain_topic, generate_learning_path
+from core.skills_manager import (
+    get_active_skills_context,
+    load_skill_content,
+    match_skill_by_message,
+    sync_skills_to_db,
+)
 
 load_dotenv()
 
@@ -95,8 +102,16 @@ def _crawl_jd_tool(platform: str, keyword: str) -> str:
         return f"爬取失败：{e}"
 
 
+def _load_skill_detail_tool(skill_name: str) -> str:
+    """供 Agent 主动加载指定 Skill 完整内容的工具函数"""
+    content = load_skill_content(skill_name)
+    if content:
+        return f"## 技能包：{skill_name}\n\n{content}"
+    return f"未找到技能包：{skill_name}"
+
+
 def _build_tools() -> list:
-    """构建 LangChain 工具列表（Phase 1 + Phase 2）"""
+    """构建 LangChain 工具列表（Phase 1 + Phase 2 + Phase 4）"""
     return [
         StructuredTool.from_function(
             func=read_github_repo,
@@ -143,26 +158,33 @@ def _build_tools() -> list:
             name="generate_learning_path",
             description="根据用户当前水平和岗位需求生成个性化学习路径。参数：target_role（目标岗位，默认AI TA），timeframe_weeks（准备周数，默认14）。",
         ),
+        StructuredTool.from_function(
+            func=_load_skill_detail_tool,
+            name="load_skill_detail",
+            description="加载指定技能包的完整内容（考察标准/面试风格/评级标准等）。参数：skill_name（技能包名称，如「AI_TA核心知识」「米哈游面试风格」）。当判断用户问题与某技能包相关时主动调用。",
+        ),
     ]
 
 
-def _build_agent(memory_context: str = ""):
-    """构建 Agent 实例"""
+def _build_agent(memory_context: str = "", skills_context: str = ""):
+    """构建 Agent 实例，注入记忆上下文和技能包元数据"""
     llm = ChatOpenAI(
-    model=DEEPSEEK_MODEL,
-    api_key=DEEPSEEK_API_KEY,
-    base_url="https://api.deepseek.com",
-    temperature=0.7,
-    model_kwargs={
-        "extra_body": {
-            "thinking": {"type": "disabled"}
+        model=DEEPSEEK_MODEL,
+        api_key=DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com",
+        temperature=0.7,
+        model_kwargs={
+            "extra_body": {
+                "thinking": {"type": "disabled"}
+            }
         }
-    }
-)
+    )
 
     system_content = SYSTEM_PROMPT
     if memory_context:
         system_content += f"\n\n{memory_context}"
+    if skills_context:
+        system_content += f"\n\n{skills_context}"
 
     tools = _build_tools()
     agent = create_agent(
@@ -219,14 +241,45 @@ def chat(
     if not memory_context:
         memory_context = get_relevant_memory(message)
 
+    # 同步 skills 目录到数据库（幂等）
+    try:
+        sync_skills_to_db()
+    except Exception:
+        pass
+
+    # 获取激活技能元数据（Level 1 摘要）
+    skills_context = ""
+    try:
+        skills_context = get_active_skills_context()
+    except Exception:
+        pass
+
+    # 根据用户消息匹配相关技能，自动预加载完整内容追加到消息
+    matched_skill_content = ""
+    try:
+        matched = match_skill_by_message(message)
+        if matched:
+            parts = []
+            for skill_name in matched[:2]:  # 最多加载2个技能避免超 token
+                content = load_skill_content(skill_name)
+                if content:
+                    parts.append(f"### 已自动加载技能包：{skill_name}\n{content}")
+            matched_skill_content = "\n\n".join(parts)
+    except Exception:
+        pass
+
     save_conversation(session_id=session_id, role="user", content=message)
 
     history = _session_histories[session_id]
-    new_user_msg = HumanMessage(content=message)
+    # 如果有匹配技能内容，将其附加到用户消息末尾（作为上下文）
+    user_content = message
+    if matched_skill_content:
+        user_content = f"{message}\n\n[系统自动注入相关技能包内容]\n{matched_skill_content}"
+    new_user_msg = HumanMessage(content=user_content)
     all_messages = history + [new_user_msg]
 
     try:
-        agent = _build_agent(memory_context=memory_context)
+        agent = _build_agent(memory_context=memory_context, skills_context=skills_context)
         result = agent.invoke({"messages": all_messages})
 
         result_messages: list[AnyMessage] = result.get("messages", [])
