@@ -344,4 +344,4 @@ def refresh_bilibili_portfolios(force_reanalyze: bool = False) -> dict:
     }
 
 
-print("✅ T09 完成")
+print("[intel] 模块加载完成")

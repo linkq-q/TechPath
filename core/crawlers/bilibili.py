@@ -150,9 +150,8 @@ def crawl_bilibili_portfolios(
         )
 
         if not is_logged_in:
-            print("[bilibili] 检测到未登录，请在弹出的 Edge 浏览器中扫码登录...")
-            print("[bilibili] 登录完成后请按回车继续...")
-            input()
+            print("[bilibili] 请在弹出的浏览器窗口中手动登录B站，登录完成后按回车继续...")
+            input("[bilibili] 按回车继续爬取...")
             page.get("https://www.bilibili.com")
             time.sleep(3)
 
@@ -218,7 +217,9 @@ def crawl_bilibili_portfolios(
             except Exception:
                 pass
 
-    print(f"[bilibili] 共采集 {len(all_results)} 条去重视频")
+    print(f"[bilibili] 共采集 {len(all_results)} 条去重视频（过滤前）")
+    all_results = _filter_relevant_videos(all_results)
+    print(f"[bilibili] 过滤后剩余 {len(all_results)} 条相关视频")
     return all_results[:max_count]
 
 
@@ -375,8 +376,77 @@ def _crawl_bilibili_fallback(keywords: list = None, max_count: int = 30) -> list
 
         time.sleep(random.uniform(1, 3))
 
-    print(f"[bilibili] fallback 共采集 {len(all_results)} 条")
+    print(f"[bilibili] fallback 共采集 {len(all_results)} 条（过滤前）")
+    all_results = _filter_relevant_videos(all_results)
+    print(f"[bilibili] fallback 过滤后剩余 {len(all_results)} 条")
     return all_results[:max_count]
+
+
+# ============================================================
+# 视频相关性过滤
+# ============================================================
+
+# 相关关键词：满足任意一个则保留
+_RELEVANT_KEYWORDS = [
+    "技术美术", "TA", "Technical Artist", "AIGC", "Shader", "渲染",
+    "游戏开发", "作品集", "求职", "实习", "秋招", "Unity", "UE", "Houdini",
+    "ComfyUI", "LoRA", "shader", "rendering", "shader",
+]
+
+# 明显不相关的领域关键词：标题或描述包含这些词则过滤掉
+_IRRELEVANT_KEYWORDS = [
+    "建筑", "医疗", "金融", "健身", "考研", "高考", "英语", "数学", "教师",
+    "护士", "医生", "股票", "基金", "瑜伽", "减肥", "美食", "烹饪", "旅游",
+    "化妆", "美妆", "时尚", "穿搭",
+]
+
+# 放宽后的最低保留关键词（过滤后不足5条时使用）
+_FALLBACK_KEYWORDS = ["技术美术", "TA", "Technical Artist", "TA求职", "AI TA"]
+
+
+def _filter_relevant_videos(videos: list) -> list:
+    """
+    过滤掉明显不相关的视频，保留与技术美术/AI TA 相关的内容。
+
+    Args:
+        videos: 视频信息列表
+
+    Returns:
+        过滤后的视频列表
+    """
+    if not videos:
+        return videos
+
+    before_count = len(videos)
+    filtered = []
+
+    for v in videos:
+        title = (v.get("title") or "").lower()
+        desc = (v.get("description") or "").lower()
+        combined = title + " " + desc
+
+        # 明显属于不相关领域则跳过
+        if any(kw in combined for kw in _IRRELEVANT_KEYWORDS):
+            continue
+
+        # 标题包含相关关键词则保留
+        title_original = v.get("title", "")
+        if any(kw.lower() in title_original.lower() for kw in _RELEVANT_KEYWORDS):
+            filtered.append(v)
+
+    print(f"[bilibili] 过滤：{before_count} → {len(filtered)} 条")
+
+    # 过滤后不足5条时放宽条件
+    if len(filtered) < 5:
+        print("[bilibili] 过滤后不足5条，放宽条件仅保留核心关键词视频")
+        fallback = []
+        for v in videos:
+            title = v.get("title", "")
+            if any(kw.lower() in title.lower() for kw in _FALLBACK_KEYWORDS):
+                fallback.append(v)
+        return fallback if fallback else videos[:5]
+
+    return filtered
 
 
 # ============================================================
@@ -683,4 +753,4 @@ def _compute_score(portfolio: dict) -> float:
     return round(total, 2)
 
 
-print("✅ T08 完成")
+print("[bilibili] 模块加载完成")

@@ -44,6 +44,7 @@ def render() -> None:
             if not video_url.strip():
                 st.error("请输入 B 站视频 URL")
             else:
+                st.info("⏱️ 预计需要 30-120 秒（取决于视频长度），请耐心等待...")
                 with st.status("正在导入视频...", expanded=True) as status:
                     st.write("步骤 1/2：转录音频中（可能需要数分钟）...")
 
@@ -91,6 +92,7 @@ def render() -> None:
             if not github_url.strip():
                 st.error("请输入仓库 URL")
             else:
+                st.info("⏱️ 预计需要 10-30 秒，请耐心等待...")
                 with st.spinner("正在读取 GitHub 仓库，请稍候..."):
                     result = read_github_repo(github_url.strip())
 

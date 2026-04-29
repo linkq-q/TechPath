@@ -465,4 +465,4 @@ PATH_META_JSON::{{"current_gaps": ["差距1", "差距2", "差距3"], "weekly_pla
     }
 
 
-print("✅ T02/T03/T04 完成（Phase 3 + Phase 4 历史记录集成）")
+print("[study] 模块加载完成")

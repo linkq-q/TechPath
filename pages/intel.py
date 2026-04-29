@@ -36,21 +36,31 @@ def render() -> None:
         refresh_clicked = st.button("刷新情报", use_container_width=True, key="btn_refresh_intel")
 
     if refresh_clicked:
+        import time as _time
+        st.info("⏱️ 预计需要 60-180 秒，请耐心等待...")
+        _t0 = _time.time()
         with st.status("正在刷新情报...", expanded=True) as status:
-            st.write("爬取 Boss 直聘...")
-            st.write("爬取牛客网面经...")
+            st.write("🔍 爬取 Boss 直聘...")
+            st.write("📋 爬取牛客网面经...")
 
-            result = refresh_intel(keyword=keyword.strip() or "AI TA")
+            try:
+                result = refresh_intel(keyword=keyword.strip() or "AI TA")
+            except Exception as e:
+                status.update(label="❌ 刷新失败", state="error")
+                _intel_error(e)
+                result = {}
 
             crawl_count = result.get("crawl_count", 0)
             errors = result.get("crawl_errors", [])
-            st.write(f"共获取 {crawl_count} 条数据，正在 AI 分析...")
+            if crawl_count > 0:
+                st.write(f"✅ 共获取 {crawl_count} 条数据，正在 AI 分析...")
 
             if errors:
                 for err in errors:
                     st.warning(f"部分来源爬取失败：{err}")
 
-            status.update(label="情报分析完成", state="complete", expanded=False)
+            _elapsed = round(_time.time() - _t0)
+            status.update(label=f"✅ 情报分析完成，共用时 {_elapsed} 秒", state="complete", expanded=False)
 
         st.session_state["intel_result"] = result
         st.rerun()
@@ -146,6 +156,20 @@ def _render_intel_result(intel: dict) -> None:
         st.markdown("---")
         st.markdown("#### Gap 分析")
         _render_gap_analysis(gap_analysis)
+
+
+def _intel_error(e: Exception) -> None:
+    """根据异常类型显示友好的错误提示"""
+    msg = str(e).lower()
+    if "403" in msg or "412" in msg:
+        st.error("访问受限，请稍后重试或手动登录后刷新")
+    elif "connect" in msg or "timeout" in msg:
+        st.error("网络连接失败，请检查网络后重试")
+    elif "api" in msg or "key" in msg:
+        st.error("API调用失败，请检查网络连接和API Key配置")
+    else:
+        st.error("刷新失败，请稍后重试")
+    print(f"[intel] 错误详情：{e}")
 
 
 def _render_gap_analysis(gap_text: str) -> None:
