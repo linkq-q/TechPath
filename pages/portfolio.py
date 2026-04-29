@@ -71,8 +71,11 @@ def render():
 
 def _run_refresh():
     """执行刷新流程并显示进度"""
+    import time as _time
     from core.intel import refresh_bilibili_portfolios
 
+    st.info("⏱️ 预计需要 120-300 秒（B站采集+AI分析），请耐心等待...")
+    _t0 = _time.time()
     with st.status("正在采集和分析 B 站竞品数据...", expanded=True) as status:
         st.write("📡 搜索关键词：技术美术作品集、TA实习、AI TA 作品集...")
         st.write("🤖 分析视频技术标签（可能需要几分钟）...")
@@ -80,20 +83,29 @@ def _run_refresh():
 
         try:
             result = refresh_bilibili_portfolios()
+            _elapsed = round(_time.time() - _t0)
             if "error" in result:
-                status.update(label=f"⚠️ 部分完成：{result['error']}", state="error")
+                status.update(label=f"⚠️ 部分完成，共用时 {_elapsed} 秒", state="error")
                 st.warning(result["error"])
             else:
                 total = result.get("total_count", 0)
                 dist = result.get("grade_distribution", {})
-                status.update(label=f"✅ 刷新完成！共分析 {total} 条作品集", state="complete")
+                status.update(label=f"✅ 刷新完成！共分析 {total} 条作品集，用时 {_elapsed} 秒", state="complete")
                 st.success(
                     f"S级：{dist.get('S', 0)} | A级：{dist.get('A', 0)} | "
                     f"B级：{dist.get('B', 0)} | C级：{dist.get('C', 0)}"
                 )
         except Exception as e:
-            status.update(label=f"❌ 刷新失败：{e}", state="error")
-            st.error(f"刷新失败：{e}")
+            _elapsed = round(_time.time() - _t0)
+            status.update(label=f"❌ 刷新失败，已运行 {_elapsed} 秒", state="error")
+            msg = str(e).lower()
+            if "403" in msg or "412" in msg:
+                st.error("访问受限，请稍后重试或手动登录后刷新")
+            elif "connect" in msg or "timeout" in msg:
+                st.error("网络连接失败，请检查网络后重试")
+            else:
+                st.error("刷新失败，请稍后重试")
+            print(f"[portfolio] 刷新失败：{e}")
 
     st.rerun()
 

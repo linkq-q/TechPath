@@ -191,4 +191,4 @@ def extract_and_update_knowledge_nodes(history_id: int) -> list[dict]:
     return updated_nodes
 
 
-print("✅ T02 完成")
+print("[history] 模块加载完成")

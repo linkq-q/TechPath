@@ -36,17 +36,26 @@ def render():
                 st.session_state.pop("repo_suggested_questions", None)
                 st.session_state.pop("repo_name", None)
 
+                st.info("⏱️ 预计需要 10-30 秒，请耐心等待...")
+                import time as _time
+                _t0 = _time.time()
                 with st.status("正在解读仓库，请稍候...", expanded=True) as status:
                     st.write("📥 读取仓库中（README、文件树、代码文件）...")
                     from core.study import analyze_repo_for_learning
-                    result = analyze_repo_for_learning(repo_url.strip())
+                    try:
+                        result = analyze_repo_for_learning(repo_url.strip())
+                    except Exception as e:
+                        status.update(label="❌ 解读失败", state="error")
+                        _handle_api_error(e)
+                        result = {"error": str(e)}
 
                     if "error" in result:
                         status.update(label="❌ 解读失败", state="error")
                         st.error(result["error"])
                     else:
                         st.write("✨ 生成学习报告中...")
-                        status.update(label="✅ 解读完成！", state="complete")
+                        _elapsed = round(_time.time() - _t0)
+                        status.update(label=f"✅ 解读完成！共用时 {_elapsed} 秒", state="complete")
                         st.session_state["repo_report"] = result["report_markdown"]
                         st.session_state["repo_suggested_questions"] = result.get("suggested_questions", [])
                         st.session_state["repo_name"] = result.get("repo_name", repo_url)
@@ -121,19 +130,28 @@ def render():
                 st.session_state.pop("topic_quiz_questions", None)
                 st.session_state.pop("topic_name", None)
 
+                st.info("⏱️ 预计需要 15-30 秒，请耐心等待...")
+                import time as _time
+                _t0 = _time.time()
                 with st.status(f"正在生成「{topic_input}」的讲解...", expanded=True) as status:
                     st.write("🔍 搜索知识库相关内容...")
                     st.write("📊 分析岗位需求深度...")
                     st.write("✍️ 生成个性化讲解中...")
 
                     from core.study import explain_topic
-                    result = explain_topic(topic_input.strip(), user_level)
+                    try:
+                        result = explain_topic(topic_input.strip(), user_level)
+                    except Exception as e:
+                        status.update(label="❌ 讲解生成失败", state="error")
+                        _handle_api_error(e)
+                        result = {"error": str(e)}
 
                     if "error" in result:
                         status.update(label="❌ 讲解生成失败", state="error")
                         st.error(result["error"])
                     else:
-                        status.update(label="✅ 讲解完成！", state="complete")
+                        _elapsed = round(_time.time() - _t0)
+                        status.update(label=f"✅ 讲解完成！共用时 {_elapsed} 秒", state="complete")
                         st.session_state["topic_explanation"] = result["explanation_markdown"]
                         st.session_state["topic_quiz_questions"] = result.get("quiz_questions", [])
                         st.session_state["topic_related"] = result.get("related_topics", [])
@@ -203,6 +221,9 @@ def render():
         if st.button("🗺️ 生成学习路径", key="btn_gen_path", use_container_width=True):
             st.session_state.pop("learning_path_result", None)
 
+            st.info("⏱️ 预计需要 20-40 秒，请耐心等待...")
+            import time as _time
+            _t0 = _time.time()
             with st.status(f"正在为「{target_role}」生成 {timeframe_weeks} 周学习路径...", expanded=True) as status:
                 st.write("📊 分析岗位核心技能需求...")
                 st.write("🧠 读取你的学习记录...")
@@ -210,13 +231,19 @@ def render():
                 st.write("✍️ 生成个性化路径中...")
 
                 from core.study import generate_learning_path
-                result = generate_learning_path(target_role.strip(), timeframe_weeks)
+                try:
+                    result = generate_learning_path(target_role.strip(), timeframe_weeks)
+                except Exception as e:
+                    status.update(label="❌ 生成失败", state="error")
+                    _handle_api_error(e)
+                    result = {"error": str(e)}
 
                 if "error" in result:
                     status.update(label="❌ 生成失败", state="error")
                     st.error(result["error"])
                 else:
-                    status.update(label="✅ 学习路径生成完成！", state="complete")
+                    _elapsed = round(_time.time() - _t0)
+                    status.update(label=f"✅ 学习路径生成完成！共用时 {_elapsed} 秒", state="complete")
                     st.session_state["learning_path_result"] = result
 
         # 显示学习路径
@@ -276,5 +303,20 @@ def render():
                 st.rerun()
 
 
-# 需要 re 模块用于章节切分
-import re
+import re  # 用于章节切分
+
+
+def _handle_api_error(e: Exception) -> None:
+    """根据异常类型显示友好的错误提示"""
+    msg = str(e).lower()
+    if "api" in msg or "key" in msg or "unauthorized" in msg or "401" in msg:
+        st.error("API调用失败，请检查网络连接和API Key配置")
+    elif "connect" in msg or "timeout" in msg or "network" in msg:
+        st.error("网络连接失败，请检查网络后重试")
+    elif "github" in msg or "token" in msg:
+        st.error("GitHub Token 无效，请在 .env 文件中更新 GITHUB_TOKEN")
+    elif "403" in msg or "412" in msg or "rate" in msg:
+        st.error("访问受限，请稍后重试或手动登录后刷新")
+    else:
+        st.error(f"操作失败，请稍后重试")
+    print(f"[study] 错误详情：{e}")

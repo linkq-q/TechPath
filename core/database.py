@@ -799,4 +799,4 @@ def _skill_to_dict(skill: SkillsRegistry) -> dict:
     }
 
 
-print("✅ T01 完成")
+print("[database] 模块加载完成")

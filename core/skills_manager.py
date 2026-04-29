@@ -222,4 +222,4 @@ def sync_skills_to_db() -> int:
     return count
 
 
-print("✅ T05 完成")
+print("[skills_manager] 模块加载完成")

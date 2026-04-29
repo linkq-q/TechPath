@@ -1,8 +1,13 @@
 # 文件用途：Streamlit 主入口，负责导航和页面路由
 
+import os
+
 import streamlit as st
+from dotenv import load_dotenv
 
 from core.database import init_db
+
+load_dotenv()
 
 # ---- 页面配置 ----
 st.set_page_config(
@@ -50,7 +55,26 @@ st.markdown(
 )
 
 # ---- 初始化数据库 ----
-init_db()
+try:
+    init_db()
+except Exception as _e:
+    st.error(f"数据库初始化失败：{_e}，请检查 data/ 目录权限")
+
+# ---- API Key 配置检查 ----
+_REQUIRED_KEYS = {
+    "DEEPSEEK_API_KEY": "DeepSeek（检验/讲解/情报分析）",
+    "GITHUB_TOKEN": "GitHub（项目解读）",
+}
+_OPTIONAL_KEYS = {
+    "QWEN_API_KEY": "阿里云百炼 Qwen（B站视觉分析，可选）",
+}
+_missing = [f"`{k}` → {desc}" for k, desc in _REQUIRED_KEYS.items() if not os.getenv(k)]
+if _missing:
+    st.warning(
+        "⚠️ **以下必填 API Key 未配置，相关功能将无法使用：**\n\n" +
+        "\n".join(f"- {m}" for m in _missing) +
+        "\n\n请在项目根目录创建 `.env` 文件并填写对应 Key。"
+    )
 
 # ---- Session State 初始化 ----
 if "current_page" not in st.session_state:
@@ -89,6 +113,32 @@ with st.sidebar:
         st.session_state.current_page = "skills"
 
     st.markdown("---")
+
+    # ---- API 费用统计 ----
+    try:
+        from core.cost_tracker import get_cost_summary
+        _cost = get_cost_summary()
+        st.markdown(
+            f"<small style='color:#8b949e'>"
+            f"今日费用：¥{_cost['today_cost_yuan']:.4f}<br>"
+            f"累计费用：¥{_cost['total_cost_yuan']:.4f}</small>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("💰 费用详情", expanded=False):
+            st.markdown(f"**今日调用**：{_cost['today_calls']} 次")
+            st.markdown(f"**今日 Tokens**：输入 {_cost['today_input_tokens']:,} / 输出 {_cost['today_output_tokens']:,}")
+            st.markdown("---")
+            st.markdown(f"**累计调用**：{_cost['total_calls']} 次")
+            st.markdown(f"**累计 Tokens**：输入 {_cost['total_input_tokens']:,} / 输出 {_cost['total_output_tokens']:,}")
+            if _cost.get("by_purpose"):
+                st.markdown("**按功能分类：**")
+                for p, s in sorted(_cost["by_purpose"].items(), key=lambda x: x[1]["cost_yuan"], reverse=True):
+                    st.markdown(
+                        f"- {s['label']}：{s['calls']} 次，¥{s['cost_yuan']:.4f}"
+                    )
+    except Exception:
+        pass
+
     st.markdown(
         "<small style='color:#8b949e'>基于 DeepSeek + LangChain<br>数据本地存储</small>",
         unsafe_allow_html=True,

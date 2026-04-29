@@ -273,4 +273,4 @@ def export_graph_html(output_path: str = None) -> str:
     return output_path
 
 
-print("✅ T04 完成")
+print("[knowledge_graph] 模块加载完成")
