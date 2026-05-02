@@ -68,6 +68,10 @@ class JdRecord(Base):
     location = Column(Text)
     requirements_raw = Column(Text)   # 原始 JD 文本
     skills_extracted = Column(Text)   # JSON 字符串，提取的技能列表
+    experience_required = Column(Text)  # T02 新增：经验要求
+    education_required = Column(Text)   # T02 新增：学历要求
+    company_stage = Column(Text)        # T02 新增：公司规模/融资阶段
+    base_city = Column(Text)            # T02 新增：工作城市
     crawled_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -159,12 +163,17 @@ class SkillsRegistry(Base):
 
 
 def init_db() -> None:
-    """初始化数据库，创建表结构（如不存在则创建）"""
+    """初始化数据库，创建表结构（如不存在则创建），并执行迁移"""
     global engine, SessionLocal
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    # 为已存在的表添加新列（向前兼容）
+    try:
+        _migrate_db()
+    except Exception as _me:
+        print(f"[database] 迁移警告：{_me}")
 
 
 def _get_session() -> Session:
@@ -333,6 +342,10 @@ def save_jd_record(
     location: str,
     requirements_raw: str,
     skills_extracted: list = None,
+    experience_required: str = "",
+    education_required: str = "",
+    company_stage: str = "",
+    base_city: str = "",
 ) -> int:
     """保存一条 JD 爬取记录，返回新记录的 id"""
     with _get_session() as session:
@@ -343,6 +356,10 @@ def save_jd_record(
             location=location,
             requirements_raw=requirements_raw,
             skills_extracted=json.dumps(skills_extracted or [], ensure_ascii=False),
+            experience_required=experience_required,
+            education_required=education_required,
+            company_stage=company_stage,
+            base_city=base_city,
             crawled_at=datetime.utcnow(),
         )
         session.add(record)
@@ -880,6 +897,14 @@ class MatchRecord(Base):
     gap_analysis = Column(Text)
     match_highlight = Column(Text)
     skill_match = Column(Text)
+    # T06 新增：匹配度详情
+    match_reasons = Column(Text)        # JSON 字符串，匹配的具体技术点列表
+    gap_skills = Column(Text)           # JSON 字符串，缺少的技术点列表
+    # T02 新增：从爬取的 JD 提取的字段
+    experience_required = Column(Text)
+    education_required = Column(Text)
+    company_stage = Column(Text)
+    base_city = Column(Text)
 
 
 # ---------- UserProfile CRUD ----------
@@ -1076,6 +1101,12 @@ def save_match_record(
     gap_analysis: str = "",
     match_highlight: str = "",
     skill_match: str = "",
+    match_reasons: list = None,
+    gap_skills: list = None,
+    experience_required: str = "",
+    education_required: str = "",
+    company_stage: str = "",
+    base_city: str = "",
 ) -> int:
     """保存一条 JD 匹配结果，返回 id"""
     with _get_session() as session:
@@ -1093,6 +1124,12 @@ def save_match_record(
             gap_analysis=gap_analysis,
             match_highlight=match_highlight,
             skill_match=skill_match,
+            match_reasons=json.dumps(match_reasons or [], ensure_ascii=False),
+            gap_skills=json.dumps(gap_skills or [], ensure_ascii=False),
+            experience_required=experience_required,
+            education_required=education_required,
+            company_stage=company_stage,
+            base_city=base_city,
         )
         session.add(r)
         session.commit()
@@ -1160,8 +1197,241 @@ def _match_record_to_dict(r: MatchRecord) -> dict:
         "gap_analysis": r.gap_analysis or "",
         "match_highlight": r.match_highlight or "",
         "skill_match": r.skill_match or "",
+        "match_reasons": json.loads(r.match_reasons) if r.match_reasons else [],
+        "gap_skills": json.loads(r.gap_skills) if r.gap_skills else [],
+        "experience_required": r.experience_required or "",
+        "education_required": r.education_required or "",
+        "company_stage": r.company_stage or "",
+        "base_city": r.base_city or "",
+    }
+
+
+# ============================================================
+# Phase 6 新增表：职业路径分析（T07）
+# ============================================================
+
+class CareerPathJob(Base):
+    """职业路径采集的岗位数据"""
+    __tablename__ = "career_path_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text)               # 关联 bg_match_sessions
+    job_title = Column(Text)
+    company = Column(Text)
+    experience_level = Column(Text)         # 校招/1-3年/3-5年/5年以上
+    salary_min = Column(Integer, default=0)
+    salary_max = Column(Integer, default=0)
+    skills_required = Column(Text)          # JSON 字符串
+    company_stage = Column(Text)
+    base_city = Column(Text)
+    raw_requirements = Column(Text)
+    crawled_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CareerAnalysis(Base):
+    """职业路径分析结果"""
+    __tablename__ = "career_analysis"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text)
+    target_role = Column(Text)
+    salary_trend_json = Column(Text)        # 各年段薪资统计
+    skills_evolution_json = Column(Text)    # 技能变化 JSON
+    ai_replacement_risk = Column(Integer, default=0)  # 0-100
+    ai_analysis_detail = Column(Text)
+    growth_ceiling = Column(Text)           # 上升瓶颈分析
+    summary_text = Column(Text)             # DeepSeek 生成的总结
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+def _migrate_db() -> None:
+    """为已存在的表添加新列（ALTER TABLE 方式，幂等）"""
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+
+    def _add_column(table: str, col: str, col_type: str):
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            print(f"[database] 已添加列 {table}.{col}")
+        except sqlite3.OperationalError:
+            pass  # 列已存在，忽略
+
+    # jd_records 新增字段（T02）
+    _add_column("jd_records", "experience_required", "TEXT")
+    _add_column("jd_records", "education_required", "TEXT")
+    _add_column("jd_records", "company_stage", "TEXT")
+    _add_column("jd_records", "base_city", "TEXT")
+
+    # match_records 新增字段（T06, T02）
+    _add_column("match_records", "match_reasons", "TEXT")
+    _add_column("match_records", "gap_skills", "TEXT")
+    _add_column("match_records", "experience_required", "TEXT")
+    _add_column("match_records", "education_required", "TEXT")
+    _add_column("match_records", "company_stage", "TEXT")
+    _add_column("match_records", "base_city", "TEXT")
+
+    # user_profile 新增字段（T04）
+    _add_column("user_profile", "master_school", "TEXT")
+    _add_column("user_profile", "master_major", "TEXT")
+    _add_column("user_profile", "master_grad_year", "TEXT")
+    _add_column("user_profile", "undergrad_school", "TEXT")
+    _add_column("user_profile", "undergrad_grad_year", "TEXT")
+
+    conn.commit()
+    conn.close()
+
+
+# ---------- CareerPathJob CRUD ----------
+
+def save_career_path_job(
+    session_id: str,
+    job_title: str,
+    company: str,
+    experience_level: str,
+    salary_min: int = 0,
+    salary_max: int = 0,
+    skills_required: list = None,
+    company_stage: str = "",
+    base_city: str = "",
+    raw_requirements: str = "",
+) -> int:
+    with _get_session() as session:
+        r = CareerPathJob(
+            session_id=session_id,
+            job_title=job_title,
+            company=company,
+            experience_level=experience_level,
+            salary_min=salary_min,
+            salary_max=salary_max,
+            skills_required=json.dumps(skills_required or [], ensure_ascii=False),
+            company_stage=company_stage,
+            base_city=base_city,
+            raw_requirements=raw_requirements,
+            crawled_at=datetime.utcnow(),
+        )
+        session.add(r)
+        session.commit()
+        session.refresh(r)
+        return r.id
+
+
+def get_career_path_jobs(session_id: str, experience_level: str = "") -> list[dict]:
+    with _get_session() as session:
+        q = session.query(CareerPathJob).filter(CareerPathJob.session_id == session_id)
+        if experience_level:
+            q = q.filter(CareerPathJob.experience_level == experience_level)
+        records = q.all()
+        return [
+            {
+                "id": r.id,
+                "session_id": r.session_id,
+                "job_title": r.job_title or "",
+                "company": r.company or "",
+                "experience_level": r.experience_level or "",
+                "salary_min": r.salary_min or 0,
+                "salary_max": r.salary_max or 0,
+                "skills_required": json.loads(r.skills_required) if r.skills_required else [],
+                "company_stage": r.company_stage or "",
+                "base_city": r.base_city or "",
+                "raw_requirements": r.raw_requirements or "",
+                "crawled_at": r.crawled_at.isoformat() if r.crawled_at else "",
+            }
+            for r in records
+        ]
+
+
+# ---------- CareerAnalysis CRUD ----------
+
+def save_career_analysis(
+    session_id: str,
+    target_role: str,
+    salary_trend_json: str = "",
+    skills_evolution_json: str = "",
+    ai_replacement_risk: int = 0,
+    ai_analysis_detail: str = "",
+    growth_ceiling: str = "",
+    summary_text: str = "",
+) -> int:
+    with _get_session() as session:
+        r = CareerAnalysis(
+            session_id=session_id,
+            target_role=target_role,
+            salary_trend_json=salary_trend_json,
+            skills_evolution_json=skills_evolution_json,
+            ai_replacement_risk=ai_replacement_risk,
+            ai_analysis_detail=ai_analysis_detail,
+            growth_ceiling=growth_ceiling,
+            summary_text=summary_text,
+            created_at=datetime.utcnow(),
+        )
+        session.add(r)
+        session.commit()
+        session.refresh(r)
+        return r.id
+
+
+def get_career_analyses(session_id: str = "") -> list[dict]:
+    with _get_session() as session:
+        q = session.query(CareerAnalysis).order_by(CareerAnalysis.created_at.desc())
+        if session_id:
+            q = q.filter(CareerAnalysis.session_id == session_id)
+        records = q.all()
+        return [_career_analysis_to_dict(r) for r in records]
+
+
+def get_career_analysis_by_role(target_role: str) -> dict | None:
+    with _get_session() as session:
+        r = (
+            session.query(CareerAnalysis)
+            .filter(CareerAnalysis.target_role == target_role)
+            .order_by(CareerAnalysis.created_at.desc())
+            .first()
+        )
+        return _career_analysis_to_dict(r) if r else None
+
+
+def _career_analysis_to_dict(r: CareerAnalysis) -> dict:
+    return {
+        "id": r.id,
+        "session_id": r.session_id or "",
+        "target_role": r.target_role or "",
+        "salary_trend_json": r.salary_trend_json or "{}",
+        "skills_evolution_json": r.skills_evolution_json or "{}",
+        "ai_replacement_risk": r.ai_replacement_risk or 0,
+        "ai_analysis_detail": r.ai_analysis_detail or "",
+        "growth_ceiling": r.growth_ceiling or "",
+        "summary_text": r.summary_text or "",
+        "created_at": r.created_at.isoformat() if r.created_at else "",
+    }
+
+
+# ---------- 更新 save_jd_record 支持新字段 ----------
+
+def _update_match_record_to_dict(r: MatchRecord) -> dict:
+    return {
+        "id": r.id,
+        "session_id": r.session_id,
+        "company": r.company or "",
+        "title": r.title or "",
+        "salary_min": r.salary_min or 0,
+        "salary_max": r.salary_max or 0,
+        "location": r.location or "",
+        "jd_raw": r.jd_raw or "",
+        "match_score": r.match_score or 0,
+        "competitiveness": r.competitiveness or "",
+        "work_intensity": r.work_intensity or "",
+        "gap_analysis": r.gap_analysis or "",
+        "match_highlight": r.match_highlight or "",
+        "skill_match": r.skill_match or "",
+        "match_reasons": json.loads(r.match_reasons) if r.match_reasons else [],
+        "gap_skills": json.loads(r.gap_skills) if r.gap_skills else [],
+        "experience_required": r.experience_required or "",
+        "education_required": r.education_required or "",
+        "company_stage": r.company_stage or "",
+        "base_city": r.base_city or "",
     }
 
 
 print("[database] 模块加载完成")
-print("✅ T01 完成")
+print("✅ T07 完成")

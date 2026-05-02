@@ -113,6 +113,13 @@ def analyze_jd_requirements(jd_list: list) -> dict:
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
         )
+        try:
+            from core.cost_tracker import log_api_call
+            if resp.usage:
+                log_api_call(DEEPSEEK_MODEL, resp.usage.prompt_tokens,
+                             resp.usage.completion_tokens, "情报分析")
+        except Exception:
+            pass
         raw = resp.choices[0].message.content.strip()
 
         import re

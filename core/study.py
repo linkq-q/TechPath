@@ -36,7 +36,7 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def _call_deepseek(prompt: str, temperature: float = 0.5) -> str:
+def _call_deepseek(prompt: str, temperature: float = 0.5, purpose: str = "study") -> str:
     """调用 DeepSeek 生成内容，返回文本字符串"""
     client = _get_client()
     resp = client.chat.completions.create(
@@ -44,6 +44,13 @@ def _call_deepseek(prompt: str, temperature: float = 0.5) -> str:
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
     )
+    try:
+        from core.cost_tracker import log_api_call
+        usage = resp.usage
+        if usage:
+            log_api_call(DEEPSEEK_MODEL, usage.prompt_tokens, usage.completion_tokens, purpose)
+    except Exception:
+        pass
     return resp.choices[0].message.content.strip()
 
 
@@ -128,7 +135,7 @@ README 内容（部分）：
 REPORT_META_JSON::{{"key_concepts": ["概念1", "概念2", "概念3"], "suggested_questions": ["问题1?", "问题2?", "问题3?", "问题4?", "问题5?"]}}"""
 
     try:
-        raw = _call_deepseek(prompt, temperature=0.4)
+        raw = _call_deepseek(prompt, temperature=0.4, purpose="项目解读")
     except Exception as e:
         return {"error": f"DeepSeek 调用失败：{e}"}
 
@@ -262,7 +269,7 @@ def explain_topic(topic: str, user_level: str = "初学者") -> dict:
 EXPLAIN_META_JSON::{{"quiz_questions": ["检验题1?", "检验题2?", "检验题3?"], "related_topics": ["相关话题1", "相关话题2", "相关话题3"]}}"""
 
     try:
-        raw = _call_deepseek(prompt, temperature=0.5)
+        raw = _call_deepseek(prompt, temperature=0.5, purpose="知识点讲解")
     except Exception as e:
         return {"error": f"DeepSeek 调用失败：{e}"}
 
@@ -398,7 +405,7 @@ def generate_learning_path(target_role: str = "AI TA", timeframe_weeks: int = 14
 PATH_META_JSON::{{"current_gaps": ["差距1", "差距2", "差距3"], "weekly_plan_summary": ["第1-N周：..."], "milestones": ["里程碑1", "里程碑2"], "portfolio_suggestions": ["项目1", "项目2", "项目3"]}}"""
 
     try:
-        raw = _call_deepseek(prompt, temperature=0.4)
+        raw = _call_deepseek(prompt, temperature=0.4, purpose="学习路径")
     except Exception as e:
         return {"error": f"DeepSeek 调用失败：{e}"}
 

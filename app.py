@@ -104,6 +104,9 @@ with st.sidebar:
     if st.button("🎯 背景匹配", use_container_width=True):
         st.session_state.current_page = "bg_match"
 
+    if st.button("📈 职业路径", use_container_width=True):
+        st.session_state.current_page = "career_path"
+
     st.markdown("---")
 
     if st.button("📚 学习历史", use_container_width=True):
@@ -184,6 +187,9 @@ elif st.session_state.current_page == "skills":
     render()
 elif st.session_state.current_page == "bg_match":
     from pages.bg_match import render
+    render()
+elif st.session_state.current_page == "career_path":
+    from pages.career_path import render
     render()
 else:
     from pages.knowledge import render
