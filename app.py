@@ -147,6 +147,16 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    with st.expander("重启项目？"):
+        st.markdown("如果页面连接断开，在 PowerShell 中执行以下命令重启：")
+        st.code(
+            "cd C:\\Projects\\techpath\\TechPath\n"
+            "..\\venv\\Scripts\\activate\n"
+            "streamlit run app.py",
+            language="powershell",
+        )
+        st.markdown("或直接双击项目根目录的 `start_techpath.bat`")
+
 # ---- 页面路由 ----
 if st.session_state.current_page == "knowledge":
     from pages.knowledge import render
