@@ -799,4 +799,369 @@ def _skill_to_dict(skill: SkillsRegistry) -> dict:
     }
 
 
+# ============================================================
+# Phase 5 新增表：背景匹配模块
+# ============================================================
+
+class UserProfile(Base):
+    """用户画像主表（一用户一条，upsert）"""
+    __tablename__ = "user_profile"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    edu_major = Column(Text)            # 本科专业
+    edu_level = Column(Text)            # 学校类型：985/211/双一流/普通本科/海外
+    gpa_level = Column(Text)            # GPA 水平
+    cross_tags = Column(Text)           # JSON 跨学科标签
+    bg_summary = Column(Text)           # AI 生成的背景摘要 JSON
+    free_text = Column(Text)            # 自然语言补充（≤500字）
+
+
+class UserExperience(Base):
+    """用户实习/科研经历（多条）"""
+    __tablename__ = "user_experience"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    profile_id = Column(Integer)
+    company = Column(Text)
+    duration = Column(Text)             # 1个月以内 / 1–3个月 / 3–6个月 / 6个月以上
+    exp_type = Column(Text)             # 大厂实习 / 实验室科研 / 独立项目 / 外包接单
+    directions = Column(Text)           # JSON 职能方向列表
+    desc = Column(Text)                 # 一句话描述（≤80字）
+
+
+class UserAiStack(Base):
+    """用户 AI 相关技术栈"""
+    __tablename__ = "user_ai_stack"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    profile_id = Column(Integer)
+    stack_group = Column(Text)          # LLM应用开发 / 图像3D生成 / AI工程
+    items = Column(Text)                # JSON 勾选项列表
+    extra_note = Column(Text)           # 补充说明
+
+
+class UserOtherStack(Base):
+    """用户其他相关技术栈"""
+    __tablename__ = "user_other_stack"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    profile_id = Column(Integer)
+    stack_group = Column(Text)          # 游戏引擎 / 图形Shader / DCC工具 / 编程语言 / 其他
+    items = Column(Text)                # JSON 勾选项列表
+
+
+class MatchSession(Base):
+    """背景匹配搜索会话"""
+    __tablename__ = "match_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    profile_snapshot = Column(Text)     # JSON 用户画像快照
+    keywords_used = Column(Text)        # JSON 使用的搜索关键词列表
+    total_jd_count = Column(Integer, default=0)
+
+
+class MatchRecord(Base):
+    """单条 JD 匹配结果"""
+    __tablename__ = "match_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer)
+    company = Column(Text)
+    title = Column(Text)
+    salary_min = Column(Integer, default=0)
+    salary_max = Column(Integer, default=0)
+    location = Column(Text)
+    jd_raw = Column(Text)
+    match_score = Column(Integer, default=0)
+    competitiveness = Column(Text)      # 强 / 中 / 弱
+    work_intensity = Column(Text)       # 高 / 中 / 低
+    gap_analysis = Column(Text)
+    match_highlight = Column(Text)
+    skill_match = Column(Text)
+
+
+# ---------- UserProfile CRUD ----------
+
+def upsert_user_profile(
+    edu_major: str = "",
+    edu_level: str = "",
+    gpa_level: str = "",
+    cross_tags: list = None,
+    free_text: str = "",
+    bg_summary: str = "",
+) -> int:
+    """创建或更新用户画像主记录（始终只保留一条），返回 id"""
+    with _get_session() as session:
+        profile = session.query(UserProfile).first()
+        if profile is None:
+            profile = UserProfile()
+            session.add(profile)
+        profile.edu_major = edu_major
+        profile.edu_level = edu_level
+        profile.gpa_level = gpa_level
+        profile.cross_tags = json.dumps(cross_tags or [], ensure_ascii=False)
+        profile.free_text = free_text
+        if bg_summary:
+            profile.bg_summary = bg_summary
+        profile.updated_at = datetime.utcnow()
+        session.commit()
+        session.refresh(profile)
+        return profile.id
+
+
+def get_user_profile() -> dict | None:
+    """获取用户画像主记录"""
+    with _get_session() as session:
+        p = session.query(UserProfile).first()
+        if p is None:
+            return None
+        return {
+            "id": p.id,
+            "edu_major": p.edu_major or "",
+            "edu_level": p.edu_level or "",
+            "gpa_level": p.gpa_level or "",
+            "cross_tags": json.loads(p.cross_tags) if p.cross_tags else [],
+            "free_text": p.free_text or "",
+            "bg_summary": p.bg_summary or "",
+            "updated_at": p.updated_at.isoformat() if p.updated_at else "",
+        }
+
+
+def update_profile_summary(profile_id: int, bg_summary: str) -> None:
+    """单独更新背景摘要字段"""
+    with _get_session() as session:
+        p = session.query(UserProfile).filter(UserProfile.id == profile_id).first()
+        if p:
+            p.bg_summary = bg_summary
+            p.updated_at = datetime.utcnow()
+            session.commit()
+
+
+# ---------- UserExperience CRUD ----------
+
+def replace_user_experiences(profile_id: int, experiences: list[dict]) -> None:
+    """替换指定 profile 的所有经历记录"""
+    with _get_session() as session:
+        session.query(UserExperience).filter(UserExperience.profile_id == profile_id).delete()
+        for exp in experiences:
+            record = UserExperience(
+                profile_id=profile_id,
+                company=exp.get("company", ""),
+                duration=exp.get("duration", ""),
+                exp_type=exp.get("exp_type", ""),
+                directions=json.dumps(exp.get("directions", []), ensure_ascii=False),
+                desc=exp.get("desc", ""),
+            )
+            session.add(record)
+        session.commit()
+
+
+def get_user_experiences(profile_id: int) -> list[dict]:
+    """获取指定 profile 的所有经历记录"""
+    with _get_session() as session:
+        records = (
+            session.query(UserExperience)
+            .filter(UserExperience.profile_id == profile_id)
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "company": r.company or "",
+                "duration": r.duration or "",
+                "exp_type": r.exp_type or "",
+                "directions": json.loads(r.directions) if r.directions else [],
+                "desc": r.desc or "",
+            }
+            for r in records
+        ]
+
+
+# ---------- UserAiStack / UserOtherStack CRUD ----------
+
+def replace_user_ai_stacks(profile_id: int, stacks: list[dict]) -> None:
+    """替换 AI 技术栈记录"""
+    with _get_session() as session:
+        session.query(UserAiStack).filter(UserAiStack.profile_id == profile_id).delete()
+        for s in stacks:
+            session.add(UserAiStack(
+                profile_id=profile_id,
+                stack_group=s.get("stack_group", ""),
+                items=json.dumps(s.get("items", []), ensure_ascii=False),
+                extra_note=s.get("extra_note", ""),
+            ))
+        session.commit()
+
+
+def get_user_ai_stacks(profile_id: int) -> list[dict]:
+    with _get_session() as session:
+        records = session.query(UserAiStack).filter(UserAiStack.profile_id == profile_id).all()
+        return [
+            {
+                "stack_group": r.stack_group or "",
+                "items": json.loads(r.items) if r.items else [],
+                "extra_note": r.extra_note or "",
+            }
+            for r in records
+        ]
+
+
+def replace_user_other_stacks(profile_id: int, stacks: list[dict]) -> None:
+    """替换其他技术栈记录"""
+    with _get_session() as session:
+        session.query(UserOtherStack).filter(UserOtherStack.profile_id == profile_id).delete()
+        for s in stacks:
+            session.add(UserOtherStack(
+                profile_id=profile_id,
+                stack_group=s.get("stack_group", ""),
+                items=json.dumps(s.get("items", []), ensure_ascii=False),
+            ))
+        session.commit()
+
+
+def get_user_other_stacks(profile_id: int) -> list[dict]:
+    with _get_session() as session:
+        records = session.query(UserOtherStack).filter(UserOtherStack.profile_id == profile_id).all()
+        return [
+            {
+                "stack_group": r.stack_group or "",
+                "items": json.loads(r.items) if r.items else [],
+            }
+            for r in records
+        ]
+
+
+# ---------- MatchSession / MatchRecord CRUD ----------
+
+def save_match_session(
+    profile_snapshot: dict,
+    keywords_used: list,
+    total_jd_count: int = 0,
+) -> int:
+    """创建一个匹配 session，返回 id"""
+    with _get_session() as session:
+        s = MatchSession(
+            created_at=datetime.utcnow(),
+            profile_snapshot=json.dumps(profile_snapshot, ensure_ascii=False),
+            keywords_used=json.dumps(keywords_used, ensure_ascii=False),
+            total_jd_count=total_jd_count,
+        )
+        session.add(s)
+        session.commit()
+        session.refresh(s)
+        return s.id
+
+
+def update_match_session_count(session_id: int, total_jd_count: int) -> None:
+    with _get_session() as session:
+        s = session.query(MatchSession).filter(MatchSession.id == session_id).first()
+        if s:
+            s.total_jd_count = total_jd_count
+            session.commit()
+
+
+def save_match_record(
+    session_id: int,
+    company: str,
+    title: str,
+    salary_min: int,
+    salary_max: int,
+    location: str,
+    jd_raw: str,
+    match_score: int = 0,
+    competitiveness: str = "",
+    work_intensity: str = "",
+    gap_analysis: str = "",
+    match_highlight: str = "",
+    skill_match: str = "",
+) -> int:
+    """保存一条 JD 匹配结果，返回 id"""
+    with _get_session() as session:
+        r = MatchRecord(
+            session_id=session_id,
+            company=company,
+            title=title,
+            salary_min=salary_min,
+            salary_max=salary_max,
+            location=location,
+            jd_raw=jd_raw,
+            match_score=match_score,
+            competitiveness=competitiveness,
+            work_intensity=work_intensity,
+            gap_analysis=gap_analysis,
+            match_highlight=match_highlight,
+            skill_match=skill_match,
+        )
+        session.add(r)
+        session.commit()
+        session.refresh(r)
+        return r.id
+
+
+def get_match_records(session_id: int) -> list[dict]:
+    """获取指定 session 的所有 JD 匹配结果，按分数降序"""
+    with _get_session() as session:
+        records = (
+            session.query(MatchRecord)
+            .filter(MatchRecord.session_id == session_id)
+            .order_by(MatchRecord.match_score.desc())
+            .all()
+        )
+        return [_match_record_to_dict(r) for r in records]
+
+
+def get_all_match_sessions(limit: int = 50) -> list[dict]:
+    """获取所有匹配 session，按时间倒序"""
+    with _get_session() as session:
+        sessions = (
+            session.query(MatchSession)
+            .order_by(MatchSession.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": s.id,
+                "created_at": s.created_at.isoformat() if s.created_at else "",
+                "keywords_used": json.loads(s.keywords_used) if s.keywords_used else [],
+                "total_jd_count": s.total_jd_count or 0,
+            }
+            for s in sessions
+        ]
+
+
+def delete_match_session(session_id: int) -> bool:
+    """删除一个 session 及其所有 match_records"""
+    with _get_session() as session:
+        session.query(MatchRecord).filter(MatchRecord.session_id == session_id).delete()
+        s = session.query(MatchSession).filter(MatchSession.id == session_id).first()
+        if s is None:
+            return False
+        session.delete(s)
+        session.commit()
+        return True
+
+
+def _match_record_to_dict(r: MatchRecord) -> dict:
+    return {
+        "id": r.id,
+        "session_id": r.session_id,
+        "company": r.company or "",
+        "title": r.title or "",
+        "salary_min": r.salary_min or 0,
+        "salary_max": r.salary_max or 0,
+        "location": r.location or "",
+        "jd_raw": r.jd_raw or "",
+        "match_score": r.match_score or 0,
+        "competitiveness": r.competitiveness or "",
+        "work_intensity": r.work_intensity or "",
+        "gap_analysis": r.gap_analysis or "",
+        "match_highlight": r.match_highlight or "",
+        "skill_match": r.skill_match or "",
+    }
+
+
 print("[database] 模块加载完成")
+print("✅ T01 完成")
