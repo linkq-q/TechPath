@@ -1,4 +1,6 @@
 # 文件用途：背景匹配页面 —— Tab1 录入 / Tab2 结果+分析 / Tab3 历史记录
+# T04: 支持本科+硕士两段学历，新增筛选条件组
+# T06: 结果页新增推荐投递顺序
 
 import json
 
@@ -9,8 +11,6 @@ import streamlit as st
 # ============================================================
 
 _EDU_LEVELS = ["985", "211", "双一流", "普通本科", "海外", "其他"]
-_GPA_LEVELS = ["3.8+", "3.5–3.8", "3.0–3.5", "3.0以下", "不展示"]
-_CROSS_TAGS = ["美术", "音乐", "设计", "管理", "无"]
 
 _EXP_DURATIONS = ["1个月以内", "1–3个月", "3–6个月", "6个月以上"]
 _EXP_TYPES = ["大厂实习", "实验室科研", "独立项目", "外包接单"]
@@ -29,6 +29,13 @@ _OTHER_STACKS = {
     "编程语言": ["Python", "C++", "C#", "JavaScript", "TypeScript", "Rust"],
     "其他": ["Live2D", "Spine", "Figma", "Arduino", "自然语言处理(非LLM)"],
 }
+
+# T04 筛选选项
+_TARGET_CITIES = ["北京", "上海", "深圳", "广州", "杭州", "成都", "武汉", "不限"]
+_COMPANY_STAGES = ["上市公司", "D轮及以上", "C轮", "B轮", "A轮", "不限"]
+_EXP_PREFS = ["只看校招", "看1-3年", "看3-5年", "全部"]
+
+_GRAD_YEARS = [""] + [str(y) for y in range(2018, 2031)]
 
 
 # ============================================================
@@ -65,7 +72,13 @@ def _collect_profile_from_state() -> dict:
     return {
         "edu_major": st.session_state.get("bgm_edu_major", ""),
         "edu_level": st.session_state.get("bgm_edu_level", ""),
-        "gpa_level": st.session_state.get("bgm_gpa_level", ""),
+        "undergrad_school": st.session_state.get("bgm_undergrad_school", ""),
+        "undergrad_grad_year": st.session_state.get("bgm_undergrad_grad_year", ""),
+        # 硕士部分
+        "has_master": st.session_state.get("bgm_has_master", False),
+        "master_school": st.session_state.get("bgm_master_school", ""),
+        "master_major": st.session_state.get("bgm_master_major", ""),
+        "master_grad_year": st.session_state.get("bgm_master_grad_year", ""),
         "cross_tags": st.session_state.get("bgm_cross_tags", []),
         "experiences": experiences,
         "ai_stacks": ai_stacks,
@@ -74,11 +87,24 @@ def _collect_profile_from_state() -> dict:
     }
 
 
+def _collect_filters_from_state() -> dict:
+    """收集筛选条件"""
+    cities = st.session_state.get("bgm_filter_cities", ["不限"])
+    stages = st.session_state.get("bgm_filter_stages", ["不限"])
+    return {
+        "target_cities": [c for c in cities if c != "不限"],
+        "salary_min_k": st.session_state.get("bgm_filter_salary_floor", 0),
+        "company_stages": [s for s in stages if s != "不限"],
+        "experience_pref": st.session_state.get("bgm_filter_exp_pref", "只看校招"),
+    }
+
+
 # ============================================================
-# Tab 1：背景录入
+# Tab 1：背景录入（T04）
 # ============================================================
 
 def _render_tab1():
+    # A. 本科背景
     st.subheader("A. 本科背景")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -86,9 +112,29 @@ def _render_tab1():
     with col2:
         st.selectbox("学校类型", _EDU_LEVELS, key="bgm_edu_level")
     with col3:
-        st.selectbox("GPA 水平", _GPA_LEVELS, key="bgm_gpa_level")
-    st.multiselect("跨学科标签", _CROSS_TAGS, key="bgm_cross_tags")
+        st.text_input("本科学校名称（可选）", key="bgm_undergrad_school", placeholder="如：北京大学")
 
+    col4, col5 = st.columns(2)
+    with col4:
+        st.selectbox("本科毕业年份", _GRAD_YEARS, key="bgm_undergrad_grad_year")
+    with col5:
+        st.multiselect("跨学科标签", ["美术", "音乐", "设计", "管理", "无"], key="bgm_cross_tags")
+
+    # A2. 硕士（可选）
+    st.markdown("---")
+    has_master = st.checkbox("📚 我有/正在读研究生（硕士）", key="bgm_has_master")
+    if has_master:
+        with st.container():
+            st.caption("硕士信息")
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1:
+                st.text_input("硕士学校名称", key="bgm_master_school", placeholder="如：清华大学")
+            with mc2:
+                st.text_input("硕士专业", key="bgm_master_major", placeholder="如：人工智能")
+            with mc3:
+                st.selectbox("硕士毕业年份", _GRAD_YEARS, key="bgm_master_grad_year")
+
+    # B. 实习/科研经历
     st.divider()
     st.subheader("B. 实习 / 科研经历")
 
@@ -121,6 +167,7 @@ def _render_tab1():
             st.session_state.bgm_exp_count -= 1
             st.rerun()
 
+    # C. AI 技术栈
     st.divider()
     st.subheader("C. AI 相关技术栈")
     for group, options in _AI_STACKS.items():
@@ -133,11 +180,11 @@ def _render_tab1():
         placeholder='如"用 DeepSeek + Unity 做过 NPC 对话系统"',
         height=80,
     )
-    # 将同一个 note 存到每个 group（简化存储，只用第一个 group 的 note）
     for group in _AI_STACKS:
         if f"bgm_ai_note_{group}" not in st.session_state:
             st.session_state[f"bgm_ai_note_{group}"] = ""
 
+    # D. 其他技术栈
     st.divider()
     st.subheader("D. 其他相关技术栈")
     cols = st.columns(2)
@@ -146,6 +193,7 @@ def _render_tab1():
             st.markdown(f"**{group}**")
             st.multiselect("", options, key=f"bgm_other_{group}", label_visibility="collapsed")
 
+    # E. 自然语言补充
     st.divider()
     st.subheader("自然语言补充（可选，≤500字）")
     st.text_area(
@@ -156,13 +204,50 @@ def _render_tab1():
         placeholder='如"我做过一个 LLM 驱动的心理悬疑游戏，用了四层 prompt pipeline……"',
     )
 
+    # F. 筛选条件（T04）
+    st.divider()
+    st.subheader("🔍 搜索筛选条件（可选）")
+    st.caption("这些条件用于在爬取结果中预先过滤，减少无效评分调用。")
+
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        st.multiselect(
+            "目标城市",
+            _TARGET_CITIES,
+            default=["不限"],
+            key="bgm_filter_cities",
+        )
+        st.slider(
+            "薪资底线（K/月，低于此值不进入评分）",
+            min_value=0,
+            max_value=50,
+            value=0,
+            step=1,
+            key="bgm_filter_salary_floor",
+            help="设置为0表示不限",
+        )
+    with fc2:
+        st.multiselect(
+            "公司规模要求",
+            _COMPANY_STAGES,
+            default=["不限"],
+            key="bgm_filter_stages",
+        )
+        st.radio(
+            "工作年限要求",
+            _EXP_PREFS,
+            index=0,
+            key="bgm_filter_exp_pref",
+            horizontal=True,
+        )
+
     st.divider()
     if st.button("🚀 生成匹配", type="primary", use_container_width=True):
         _run_match_pipeline()
 
 
 def _run_match_pipeline():
-    """执行完整匹配流程（摘要 → 搜索 → 评分），结果存入 session_state"""
+    """执行完整匹配流程（摘要 → 搜索 → 预筛选 → 评分），结果存入 session_state"""
     from core.bg_match import generate_bg_summary, run_match_session
     from core.database import (
         upsert_user_profile,
@@ -172,10 +257,10 @@ def _run_match_pipeline():
     )
 
     profile = _collect_profile_from_state()
+    filters = _collect_filters_from_state()
 
     # 保存到数据库
     try:
-        # 同步 AI note
         ai_note = st.session_state.get("bgm_ai_note_all", "")
         for group in _AI_STACKS:
             st.session_state[f"bgm_ai_note_{group}"] = ai_note
@@ -183,8 +268,6 @@ def _run_match_pipeline():
         profile_id = upsert_user_profile(
             edu_major=profile["edu_major"],
             edu_level=profile["edu_level"],
-            gpa_level=profile["gpa_level"],
-            cross_tags=profile["cross_tags"],
             free_text=profile["free_text"],
         )
         replace_user_experiences(profile_id, profile["experiences"])
@@ -202,7 +285,6 @@ def _run_match_pipeline():
         if "error" in bg_summary and not bg_summary.get("core_strengths"):
             st.error(f"背景摘要生成失败：{bg_summary['error']}")
             return
-        # 更新数据库中的摘要
         if profile_id:
             from core.database import update_profile_summary
             update_profile_summary(profile_id, json.dumps(bg_summary, ensure_ascii=False))
@@ -210,11 +292,12 @@ def _run_match_pipeline():
         st.error(f"背景摘要生成出错：{e}")
         return
 
-    progress_bar.progress(20, text=f"摘要生成完成，开始搜索岗位（关键词：{', '.join(bg_summary.get('search_keywords', []))}）…")
+    progress_bar.progress(
+        20,
+        text=f"摘要生成完成，开始搜索岗位（关键词：{', '.join(bg_summary.get('search_keywords', []))}）…",
+    )
 
-    # Step 2 + 3: 搜索 + 评分
-    total_kws = len(bg_summary.get("search_keywords", []))
-
+    # Step 2 + 3: 搜索 + 预筛选 + 评分
     def on_progress(stage, current, total):
         if stage == "crawl":
             pct = 20 + int(40 * current / max(total, 1))
@@ -228,6 +311,7 @@ def _run_match_pipeline():
             bg_summary=bg_summary,
             profile_snapshot=profile,
             on_progress=on_progress,
+            filters=filters,
         )
         st.session_state["bgm_last_session_id"] = session_id
         st.session_state["bgm_last_results"] = scored
@@ -236,6 +320,64 @@ def _run_match_pipeline():
         st.success(f"匹配完成，共 {len(scored)} 条岗位，请切换到「匹配结果」Tab 查看。")
     except Exception as e:
         st.error(f"匹配过程出错：{e}")
+
+
+# ============================================================
+# 推荐投递顺序（T06）
+# ============================================================
+
+def _compute_composite_score(r: dict) -> float:
+    """
+    综合评分 = 竞争力*0.4 + 匹配度*0.4 + 薪资吸引力*0.2
+    """
+    comp_map = {"强": 90, "中": 60, "弱": 30}
+    comp_score = comp_map.get(r.get("competitiveness", "中"), 60)
+    match = r.get("match_score", 50)
+    sal_max = r.get("salary_max", 0) or 0
+    sal_score = min(100, sal_max * 2.5) if sal_max > 0 else 50
+    return comp_score * 0.4 + match * 0.4 + sal_score * 0.2
+
+
+def _render_recommended_order(records: list[dict]):
+    """T06：显示推荐投递顺序分三档"""
+    if not records:
+        return
+
+    scored = [(r, _compute_composite_score(r)) for r in records]
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    tier_a = [(r, s) for r, s in scored if s >= 75][:3]   # 重点投递
+    tier_b = [(r, s) for r, s in scored if 50 <= s < 75][:3]  # 积极尝试
+    tier_c = [(r, s) for r, s in scored if s < 50][:3]    # 保底备选
+
+    st.markdown("### 🎯 推荐投递顺序")
+    st.caption("综合评分 = 竞争力×0.4 + 技术匹配度×0.4 + 薪资吸引力×0.2")
+
+    def _render_tier(title: str, color: str, items: list):
+        if not items:
+            return
+        st.markdown(f"**{title}**")
+        for r, s in items:
+            sal = ""
+            if r.get("salary_min") or r.get("salary_max"):
+                lo, hi = r.get("salary_min", 0), r.get("salary_max", 0)
+                sal = f"💰{lo}–{hi}K " if lo != hi else f"💰{lo}K "
+            reasons = r.get("match_reasons", [])
+            reason_str = "、".join(reasons[:3]) if reasons else ""
+            st.markdown(
+                f'<div style="border-left:4px solid {color};padding:6px 12px;margin:4px 0;'
+                f'background:#161b22;border-radius:4px">'
+                f'<b>{r.get("title","未知岗位")}</b> @ {r.get("company","未知公司")} '
+                f'{sal}'
+                f'<span style="color:#8b949e">综合:{s:.0f}分</span>'
+                + (f'<br><small style="color:#58a6ff">✅ {reason_str}</small>' if reason_str else "")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+    _render_tier("🌟 重点投递（综合>75）", "#3fb950", tier_a)
+    _render_tier("🚀 积极尝试（综合50-75）", "#d29922", tier_b)
+    _render_tier("🛡️ 保底备选（综合<50）", "#f85149", tier_c)
 
 
 # ============================================================
@@ -252,8 +394,12 @@ def _render_tab2(records: list[dict] = None, bg_summary: dict = None):
         st.info("暂无匹配结果。请先在「背景录入」Tab 点击「生成匹配」。")
         return
 
+    # 推荐投递顺序（T06）
+    _render_recommended_order(records)
+    st.divider()
+
     # 筛选器
-    st.markdown("#### 筛选")
+    st.markdown("#### 全部结果筛选")
     fcol1, fcol2, fcol3 = st.columns(3)
     with fcol1:
         filter_comp = st.multiselect(
@@ -304,7 +450,7 @@ def _render_tab2(records: list[dict] = None, bg_summary: dict = None):
         header = (
             f"{score_badge} | {r.get('title','未知岗位')} @ **{r.get('company','未知公司')}**"
             + (f" | 💰{salary_str}" if salary_str else "")
-            + f" | {r.get('location','')}"
+            + (f" | {r.get('location','')}" if r.get("location") else "")
             + f" | {_comp_color.get(r.get('competitiveness','中'), '🟡')} 竞争力{r.get('competitiveness','中')}"
             + f" | {_intensity_label.get(r.get('work_intensity','中'), '⚡中强度')}"
         )
@@ -319,8 +465,22 @@ def _render_tab2(records: list[dict] = None, bg_summary: dict = None):
                     st.success(f"✨ 亮点：{r['match_highlight']}")
                 if r.get("skill_match"):
                     st.info(f"🎯 技能匹配：{r['skill_match']}")
+                # T06: 匹配的技术点
+                if r.get("match_reasons"):
+                    st.markdown("**✅ 匹配技术点：** " + " · ".join(r["match_reasons"][:5]))
+                if r.get("gap_skills"):
+                    st.markdown("**⚠️ 待补技术点：** " + " · ".join(r["gap_skills"][:5]))
                 if r.get("gap_analysis"):
                     st.warning(f"⚠️ 差距分析：{r['gap_analysis']}")
+                extra_info = []
+                if r.get("experience_required"):
+                    extra_info.append(f"经验：{r['experience_required']}")
+                if r.get("education_required"):
+                    extra_info.append(f"学历：{r['education_required']}")
+                if r.get("company_stage"):
+                    extra_info.append(f"阶段：{r['company_stage']}")
+                if extra_info:
+                    st.caption(" | ".join(extra_info))
                 if r.get("jd_raw"):
                     with st.expander("查看 JD 原文"):
                         st.text(r["jd_raw"][:2000])
@@ -339,7 +499,7 @@ def _render_data_analysis(records: list[dict], bg_summary: dict):
 
     col1, col2 = st.columns(2)
 
-    # 4.1 薪资分布
+    # 薪资分布
     with col1:
         st.markdown("**薪资分布（K/月）**")
         try:
@@ -361,15 +521,14 @@ def _render_data_analysis(records: list[dict], bg_summary: dict):
                 df = pd.DataFrame({"薪资区间": labels, "岗位数": counts})
                 df = df[df["岗位数"] > 0]
                 st.bar_chart(df.set_index("薪资区间"))
-                if salary_data:
-                    median = sorted(salary_data)[len(salary_data) // 2]
-                    st.caption(f"中位数薪资约 {median:.0f}K/月")
+                median = sorted(salary_data)[len(salary_data) // 2]
+                st.caption(f"中位数薪资约 {median:.0f}K/月")
             else:
                 st.caption("暂无薪资数据")
         except Exception as e:
             st.caption(f"薪资图表生成失败：{e}")
 
-    # 4.3 工作强度分布
+    # 工作强度分布
     with col2:
         st.markdown("**工作强度分布**")
         try:
@@ -385,7 +544,7 @@ def _render_data_analysis(records: list[dict], bg_summary: dict):
         except Exception as e:
             st.caption(f"强度分析失败：{e}")
 
-    # 4.2 竞争力评估
+    # 竞争力评估
     st.markdown("---")
     st.markdown("**竞争力评估**")
     if "bgm_comp_analysis" not in st.session_state:
@@ -403,24 +562,34 @@ def _render_data_analysis(records: list[dict], bg_summary: dict):
     if st.session_state.get("bgm_comp_analysis"):
         st.markdown(st.session_state["bgm_comp_analysis"])
 
-    # 4.4 技能缺口 Top10
+    # 高频技能缺口 Top10
     st.markdown("---")
     st.markdown("**高频技能缺口 Top 10**")
     try:
         from collections import Counter
         import re
-        gap_texts = " ".join(r.get("gap_analysis", "") for r in records if r.get("gap_analysis"))
-        # 简单提取中文词语（2-10字）作为关键词
-        words = re.findall(r"[一-鿿]{2,10}|[A-Za-z]{3,15}", gap_texts)
-        # 过滤停用词
-        stop = {"缺乏", "需要", "建议", "补充", "经验", "相关", "能力", "技能", "工作", "开发", "实习", "项目"}
-        filtered_words = [w for w in words if w not in stop and len(w) >= 2]
-        top10 = Counter(filtered_words).most_common(10)
-        if top10:
+        # 优先使用 gap_skills 字段（T06）
+        all_gaps = []
+        for r in records:
+            gs = r.get("gap_skills", [])
+            if isinstance(gs, list):
+                all_gaps.extend(gs)
+        if all_gaps:
+            top10 = Counter(all_gaps).most_common(10)
             for word, cnt in top10:
                 st.markdown(f"- **{word}**（出现 {cnt} 次）")
         else:
-            st.caption("暂无缺口数据")
+            # 回退到文本分析
+            gap_texts = " ".join(r.get("gap_analysis", "") for r in records if r.get("gap_analysis"))
+            words = re.findall(r"[一-鿿]{2,10}|[A-Za-z]{3,15}", gap_texts)
+            stop = {"缺乏", "需要", "建议", "补充", "经验", "相关", "能力", "技能", "工作", "开发", "实习", "项目"}
+            filtered_words = [w for w in words if w not in stop and len(w) >= 2]
+            top10 = Counter(filtered_words).most_common(10)
+            if top10:
+                for word, cnt in top10:
+                    st.markdown(f"- **{word}**（出现 {cnt} 次）")
+            else:
+                st.caption("暂无缺口数据")
     except Exception as e:
         st.caption(f"缺口分析失败：{e}")
 
@@ -454,7 +623,6 @@ def _render_tab3():
                     st.session_state["bgm_history_view_records"] = records
                     st.session_state["bgm_history_view_id"] = s["id"]
 
-        # 若当前正在查看此 session
         if st.session_state.get("bgm_history_view_id") == s["id"]:
             records = st.session_state.get("bgm_history_view_records", [])
             if records:
@@ -482,4 +650,5 @@ def render():
         _render_tab3()
 
 
-print("✅ T03 完成")
+print("✅ T04 完成")
+print("✅ T06 完成（pages）")

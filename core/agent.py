@@ -300,6 +300,21 @@ def chat(
         # 提取工具调用
         tool_calls = _extract_tool_calls(new_messages)
 
+        # 记录 token 消耗
+        try:
+            from core.cost_tracker import log_api_call
+            total_input = total_output = 0
+            for msg in new_messages:
+                if isinstance(msg, AIMessage):
+                    um = getattr(msg, "usage_metadata", None)
+                    if um:
+                        total_input += um.get("input_tokens", 0)
+                        total_output += um.get("output_tokens", 0)
+            if total_input or total_output:
+                log_api_call(DEEPSEEK_MODEL, total_input, total_output, "检验对话")
+        except Exception:
+            pass
+
         # 更新内存历史（保留完整消息链）
         _session_histories[session_id] = result_messages
         _session_round_counts[session_id] += 1
