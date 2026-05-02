@@ -101,6 +101,9 @@ with st.sidebar:
     if st.button("🏆 竞品监测", use_container_width=True):
         st.session_state.current_page = "portfolio"
 
+    if st.button("🎯 背景匹配", use_container_width=True):
+        st.session_state.current_page = "bg_match"
+
     st.markdown("---")
 
     if st.button("📚 学习历史", use_container_width=True):
@@ -168,6 +171,9 @@ elif st.session_state.current_page == "knowledge_network":
     render()
 elif st.session_state.current_page == "skills":
     from pages.skills import render
+    render()
+elif st.session_state.current_page == "bg_match":
+    from pages.bg_match import render
     render()
 else:
     from pages.knowledge import render
